@@ -1,8 +1,8 @@
-# 🤖 AI Telegram Integration Module 2.0
+# 🤖 AI Cognitive Assistant 2.2 (Event Bus Architecture)
 
 <div align="center">
 
-  <img src="banner.png" width="1280" alt="AI Telegram Integration Module - Banner">
+  <img src="banner.png" width="1280" alt="AI Cognitive Assistant - Banner">
 
   <br />
 
@@ -11,443 +11,210 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-An advanced AI Desktop Assistant with **multi-layered memory architecture**, connecting a **local language model (LM Studio)** with intelligent memory management, autonomous reasoning, and a **Document RAG engine**.
-
----
-
-## ⚡ Features
-
-<details>
-<summary>Click to expand Features</summary>
-
-### 1. **Multi-Layered Memory System**
-   - **Chat Memory**: Rolling conversation history (18 turns)
-   - **Long-Term Memory**: Persistent SQLite-based memory store with versioning
-   - **Reasoning Layer**: Semantic embedding-based hypothesis storage
-   - **Meta-Memory**: Self-reflective memory tracking (tracks changes, consolidations)
-   
-### 2. **Memory Types (Hierarchical)**
-   - **PERMISSION**: Explicit user grants (highest priority)
-   - **RULE**: Behavior guidelines for assistant
-   - **IDENTITY**: Names, roles, locations, religion
-   - **PREFERENCE**: Likes/dislikes
-   - **GOAL**: Aims/desires
-   - **FACT**: Objective truths
-   - **BELIEF**: Opinions/convictions (lowest priority)
-
-### 3. **Intelligent Memory Management**
-   - **Automatic Extraction**: LLM extracts durable memories from conversations
-   - **Confidence Gating**: Type-specific confidence thresholds prevent noise
-   - **Conflict Detection**: Detects and tracks contradictions
-   - **Version Chaining**: Links memory updates via parent_id (append-only ledger)
-   - **Smart Consolidation**: 
-     - Automatic deduplication via semantic similarity
-     - Substring detection for expansions (e.g., "Software Engineer" → "Software Engineer at Tech Company")
-     - Type-specific thresholds (GOAL: 0.88, IDENTITY/BELIEF: 0.87, others: 0.93)
-     - Periodic consolidation (every 10 minutes) + startup consolidation
-
-### 4. **Document RAG Engine**
-   - **File Support**: Ingests **PDF** and **DOCX** files.
-   - **Semantic Chunking**: Intelligent text splitting with overlap for context preservation.
-   - **Vector Search**: Uses **FAISS** for high-performance similarity search.
-   - **Auto-Citation**: Responses citing documents automatically append `[Source: filename]`.
-
-### 5. **Advanced Command System (Slash Commands)**
-   - **General Resets**: `/ResetChat`, `/ResetMemory`, `/ResetReasoning`, `/ResetMetaMemory`, `/ResetAll`
-   - **Type-Specific Removal**: `/RemoveGoal`, `/RemoveIdentity`, `/RemoveFact`, `/RemoveBelief`, `/RemovePreference`, `/RemovePermission`, `/RemoveRule`
-   - **Inspection**: `/Memories`, `/MetaMemories`
-   - **Maintenance**: `/Consolidate`
-   - **Documents**: `/Documents`, `/DocContent`, `/RemoveDoc`
-
-### 6. **Memory Arbiter**
-   - Autonomous gatekeeper between reasoning and long-term memory
-   - Enforces admission rules (confidence thresholds, precedence)
-   - Creates meta-memories for transparency
-   - Prevents duplicate storage
-
-### 7. **Local LM Integration**
-   - Uses LM Studio models via local API (`v1/chat/completions`)
-   - Embedding support for semantic similarity
-   - Rolling context support with configurable turns
-   - Memory-enhanced system prompts
-
-### 8. **Safety Features**
-   - Inactivity-based chat reset (30 minutes)
-   - Generic assistant goal filtering (blocks "I'm here to help" pollution)
-   - Low-quality candidate filtering (blocks greetings, questions, filler)
-   - Append-only memory ledger (no data loss)
-
-</details>
-
----
-
-## 🏗 Architecture
-
-<details>
-<summary>Click to expand Architecture</summary>
-
-### **Memory Flow**
-```
-User Message
-    ↓
-[Chat Memory] (rolling history)
-    ↓
-[LM Studio] (response generation)
-    ↓
-[Memory Extraction] (LLM-based candidate detection)
-    ↓
-[Reasoning Store] (semantic embeddings, TTL=1h)
-    ↓
-[Memory Arbiter] (confidence gating, conflict detection)
-    ↓
-[Long-Term Memory] (SQLite, versioned, append-only)
-    ↓
-[Memory Consolidator] (deduplication, similarity linking)
-    ↓
-[Meta-Memory] (change tracking, self-reflection)
-```
-
-### **File Structure**
-- **`bot.py`**: Main loop, command handling, orchestration
-- **`telegram_api.py`**: Telegram API wrapper (polling, message sending)
-- **`lm.py`**: LM Studio integration, memory extraction, embeddings
-- **`memory.py`**: Long-term memory store (SQLite, versioning)
-- **`reasoning.py`**: Semantic reasoning store (embeddings, TTL)
-- **`memory_arbiter.py`**: Admission control, conflict detection
-- **`memory_consolidator.py`**: Deduplication, similarity linking
-- **`meta_memory.py`**: Meta-cognition, change tracking
-- **`config.py`**: Configuration (tokens, URLs, models)
-
-</details>
-
----
-
-## 🛠 Installation
-
-<details>
-<summary>Click to expand Installation</summary>
-
-### 1. **Clone the repository**
-
-```bash
-git clone https://github.com/Aegean-E/AITelegramIntegrationModule.git
-cd AITelegramIntegrationModule
-```
-
-### 2. **Install Python dependencies**
-
-```bash
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-**Required packages:**
-- `requests` (Telegram API, LM Studio)
-- `numpy` (embeddings)
-- `scikit-learn` (cosine similarity)
-
-### 3. **Create a Telegram Bot and Get User ID**
-
-```
-3.1 - Open Telegram and search for @BotFather
-3.2 - Send the command: /newbot
-3.3 - Follow the prompts:
-      - Give your bot a name
-      - Give your bot a username (must end with `bot`)
-3.4 - Save your Bot Token (e.g., 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ)
-3.5 - Send a message to your new bot
-3.6 - Visit: https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
-3.7 - Find your user ID in the response (under "chat": {"id": ...})
-```
-
-### 4. **Configure Your Bot (`config.py`)**
-
-```python
-# Telegram bot token from BotFather
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-
-# Your own chat/user ID (optional, can restrict bot to yourself)
-CHAT_ID = int("YOUR_TELEGRAM_CHAT_ID")
-
-# Local LM Studio API endpoint
-LM_STUDIO_BASE_URL = "http://127.0.0.1:1234"
-CHAT_COMPLETIONS_URL = f"{LM_STUDIO_BASE_URL}/v1/chat/completions"
-
-# Model names (loaded in LM Studio)
-CHAT_MODEL = "qwen2.5-vl-7b-instruct-abliterated"
-EMBEDDING_MODEL = "nomic-embed-text-v1.5"
-```
-
-### 5. **Run Your Local Server on LM Studio**
-
-```
-5.1 - Open LM Studio on your computer
-5.2 - Load your desired chat model (e.g., Qwen 2.5 VL 7B)
-5.3 - Load your embedding model (e.g., Nomic Embed Text v1.5)
-5.4 - Start the local server (default: http://127.0.0.1:1234)
-```
-
-### 6. **Start the Bot**
-
-**Option A: Command Line**
-```bash
-python bot.py
-```
-
-**Option B: Batch File (Windows)**
-```bash
-# Edit startbot.bat with your paths
-# Then double-click startbot.bat
-```
-
-</details>
-
----
-
-## 📖 Usage
-
-<details>
-<summary>Click to expand Usage</summary>
-
-### **Basic Conversation**
-Just message your bot naturally. It will:
-- Remember facts about you (name, location, profession)
-- Track preferences and beliefs
-- Store permissions and rules
-- Auto-consolidate duplicates
-
-### **Slash Commands**
-
-#### **General Management**
-- `/ResetChat` - Clear conversation history
-- `/ResetMemory` - Wipe long-term memory
-- `/ResetReasoning` - Clear reasoning buffer
-- `/ResetMetaMemory` - Clear meta-memories
-- `/ResetAll` - Full reset (chat + memory + reasoning + meta)
-
-#### **Type-Specific Removal**
-- `/RemoveGoal` - Remove all GOAL memories
-- `/RemoveIdentity` - Remove all IDENTITY memories
-- `/RemoveFact` - Remove all FACT memories
-- `/RemoveBelief` - Remove all BELIEF memories
-- `/RemovePreference` - Remove all PREFERENCE memories
-- `/RemovePermission` - Remove all PERMISSION memories
-- `/RemoveRule` - Remove all RULE memories
-
-#### **Inspection**
-- `/Memories` - View saved memories (hierarchical display)
-- `/MetaMemories` - View meta-memories (change history)
-
-#### **Maintenance**
-- `/Consolidate` - Manually trigger memory consolidation
-
-### **Example Workflow**
-```
-You: My name is x
-Bot: [Stores IDENTITY: User name is X]
-
-You: I'm a worker at X.
-Bot: [Stores IDENTITY: User is a worker at X.]
-
-You: /Memories
-Bot: Shows consolidated memories (no duplicates)
-```
-
-</details>
-
----
-
-## 🧠 Memory System Details
-
-<details>
-<summary>Click to expand Memory System</summary>
-
-### **Confidence Thresholds (Admission Gates)**
-| Type | Minimum Confidence |
-|------|-------------------|
-| PERMISSION | 0.85 |
-| RULE | 0.90 |
-| IDENTITY | 0.80 |
-| PREFERENCE | 0.60 |
-| GOAL | 0.70 |
-| FACT | 0.70 |
-| BELIEF | 0.50 |
-
-### **Consolidation Thresholds (Similarity)**
-| Type | Threshold | Notes |
-|------|-----------|-------|
-| GOAL | 0.88 | Aggressive (filters generic "help" statements) |
-| IDENTITY | 0.87 | Moderate (handles duplicates/expansions) |
-| BELIEF | 0.87 | Moderate (handles duplicates/expansions) |
-| PERMISSION | 0.87 | Moderate (handles similar grants) |
-| FACT | 0.93 | Conservative (preserves unique info) |
-| PREFERENCE | 0.93 | Conservative (preserves unique info) |
-| RULE | 0.93 | Conservative (preserves unique info) |
-
-### **Memory Extraction Filters**
-**Excluded from extraction:**
-- Pure greetings ("hi", "hello")
-- Questions (ends with ?)
-- Filler phrases ("how can I help", "what brings you here")
-- Generic assistant goals ("I'm here to help", "feel free to ask")
-- Contextual goals (e.g., "help with [current topic]")
-
-### **Meta-Memory Events**
-- `MEMORY_CREATED`: New memory stored
-- `VERSION_UPDATE`: Memory updated (IDENTITY types)
-- `SIMILARITY_LINK`: Similar memory linked (other types)
-- `CONFLICT_DETECTED`: Contradiction found
-
-</details>
-
----
-
-## 🔧 Configuration
-
-<details>
-<summary>Click to expand Configuration</summary>
-
-### **Tunable Parameters (bot.py)**
-```python
-MAX_TURNS = 18                          # Chat history turns
-INACTIVITY_RESET_MINUTES = 30           # Auto-reset after inactivity
-CONSOLIDATION_INTERVAL_SECONDS = 600    # Auto-consolidation interval (10 min)
-```
-
-### **Memory Thresholds (memory_arbiter.py)**
-```python
-CONFIDENCE_MIN = {
-    "PERMISSION": 0.85,
-    "RULE": 0.90,
-    "IDENTITY": 0.80,
-    # ... etc
-}
-```
-
-### **Consolidation Thresholds (memory_consolidator.py)**
-```python
-# Adjust in consolidate() method:
-threshold = 0.88 if type == 'GOAL' else 0.87 if type in (...) else 0.93
-```
-
-</details>
-
----
-
-## 🚀 Advanced Features
-
-<details>
-<summary>Click to expand Advanced Features</summary>
-
-### **Version Chaining**
-Every memory update creates a new version linked via `parent_id`:
-```
-Memory ID 1: "Assistant name is Ada"
-    ↓ (parent_id = 1)
-Memory ID 5: "Assistant name is Lara"
-```
-
-Query old versions: `memory_store.get_memory_history(identity)`
-
-### **Meta-Memory Self-Reflection**
-The bot can reflect on its own changes:
-```
-Bot: "I used to be called Ada, but you renamed me to Lara on 2026-02-04 14:24"
-```
-
-### **Conflict Detection**
-Detects contradictions (e.g., "User loves coffee" vs "User never drinks coffee")
-
-### **Append-Only Ledger**
-No memories are deleted - old versions are hidden but preserved for audit trails
-
-</details>
-
----
-
-## 📊 Database Schema
-
-<details>
-<summary>Click to expand Database Schema</summary>
-
-### **memories table (memory.sqlite3)**
-```sql
-CREATE TABLE memories (
-    id INTEGER PRIMARY KEY,
-    identity TEXT NOT NULL,        -- SHA256 hash for deduplication
-    parent_id INTEGER,              -- Links to previous version
-    type TEXT NOT NULL,             -- FACT | PREFERENCE | GOAL | etc.
-    subject TEXT NOT NULL,          -- User | Assistant
-    text TEXT NOT NULL,             -- Memory content
-    confidence REAL NOT NULL,       -- Admission confidence
-    source TEXT NOT NULL,           -- reasoning | user | assistant
-    conflict_with TEXT,             -- JSON array of conflicting IDs
-    created_at INTEGER NOT NULL     -- Unix timestamp
-);
-```
-
-### **meta_memories table (meta_memory.sqlite3)**
-```sql
-CREATE TABLE meta_memories (
-    id INTEGER PRIMARY KEY,
-    event_type TEXT NOT NULL,      -- MEMORY_CREATED | VERSION_UPDATE | etc.
-    memory_type TEXT NOT NULL,     -- IDENTITY | FACT | etc.
-    subject TEXT NOT NULL,         -- User | Assistant
-    text TEXT NOT NULL,            -- Human-readable description
-    old_id INTEGER,                -- Reference to old memory
-    new_id INTEGER,                -- Reference to new memory
-    old_value TEXT,                -- Old value (extracted)
-    new_value TEXT,                -- New value (extracted)
-    metadata TEXT,                 -- JSON metadata
-    created_at INTEGER NOT NULL    -- Unix timestamp
-);
-```
-
-### **reasoning_nodes table (reasoning.sqlite3)**
-```sql
-CREATE TABLE reasoning_nodes (
-    id INTEGER PRIMARY KEY,
-    content TEXT NOT NULL,
-    embedding TEXT NOT NULL,       -- JSON array of floats
-    source TEXT,
-    confidence REAL DEFAULT 0.5,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER             -- TTL support
-);
-```
-
-</details>
-
----
-
-## 🐛 Troubleshooting
-
-<details>
-<summary>Click to expand Troubleshooting</summary>
-
-### **Bot Not Responding**
-- Check LM Studio server is running (`http://127.0.0.1:1234`)
-- Verify `BOT_TOKEN` in `config.py`
-- Check console for errors
-
-### **Memory Not Saving**
-- Check confidence thresholds (may be too high)
-- Look for "Arbiter" debug output in console
-- Verify LLM is extracting candidates (check "Debug" logs)
-
-### **Too Many Duplicate Memories**
-- Run `/Consolidate` manually
-- Lower consolidation interval in `bot.py`
-- Check similarity thresholds in `memory_consolidator.py`
-
-### **Generic Goals Polluting Memory**
-- The system now filters these automatically
-- Run `/RemoveGoal` to clean existing pollution
-- Check `_is_low_quality_candidate()` in `lm.py`
-
-</details>
-
----
+A standalone cognitive architecture desktop application that combines long-term memory, autonomous research (daydreaming), and multi-modal interaction via a local UI and Telegram. Designed to run locally with LM Studio.
+
+## 🧠 Core Architecture
+
+This project implements a multi-agent cognitive architecture where specialized modules work in concert to maintain state, pursue goals, and learn continuously. It is designed to be more than a chatbot; it is a persistent digital assistant.
+
+### The Agents
+1.  **Decider (`decider.py`)**: The Executive Function.
+    - Controls the main cognitive loop.
+    - Determines the next action: Chat, Daydream, Verify, or Tool Use.
+    - Dynamically adjusts system parameters (Temperature, Max Tokens) based on context.
+    - **Tools**: Can autonomously use Calculator, Clock, Dice, and System Info.
+    
+2.  **Netzach (`continuousobserver.py`)**: The Observer.
+    - Runs in the background, monitoring logs and chat history.
+    - Detects stagnation, repetitive loops, or "boredom".
+    - Injects observations to "wake up" the Decider or suggest parameter changes.
+    - **Capabilities**: Can increase temperature if output is rigid, or request Hod to summarize if logs get too long.
+    
+3.  **Hod (`hod.py`)**: The Analyst.
+    - Performs post-process reflection.
+    - Analyzes logs to identify hallucinations or conflicts.
+    - Summarizes sessions into Meta-Memory to preserve context.
+    - Can request the Decider to prune invalid memories.
+    - **Self-Correction**: Can autonomously lower temperature or max tokens if instability is detected.
+    
+4.  **Chokhmah (`daydreaming.py`)**: The Daydreamer.
+    - Operates during idle time (when not chatting).
+    - Reads documents from the local library to generate new facts and goals.
+    - Synthesizes existing memories to generate new insights.
+    - **Modes**: `Auto` (Random), `Read` (Document focus), `Insight` (Memory synthesis).
+    
+5.  **Yesod (`telegram_api.py`)**: The Bridge.
+    - Manages the connection to the outside world via Telegram.
+    - Handles message polling and file downloads.
+
+## 📂 Project Structure & File Descriptions
+
+### Core Application
+-   **`desktop_assistant.py`**: The main entry point. Initializes the UI (Tkinter), starts background threads (Daydreamer, Consolidator, Telegram Polling), and coordinates the components.
+-   **`ui.py`**: Contains the `DesktopAssistantUI` mixin class. Handles all Tkinter widget setup, layout, and event binding to keep the main logic clean.
+-   **`settings.json`**: Configuration file storing API keys, model settings, thresholds, and prompts.
+
+### Cognitive Modules
+-   **`decider.py`**: Implements the `Decider` class. Contains logic for task switching, tool execution, and strategic thinking chains.
+-   **`continuousobserver.py`**: Implements `Netzach`. Uses a separate LLM call to monitor the "State of the World" and publish events to the `EventBus`.
+-   **`hod.py`**: Implements `Hod`. Analyzes system logs and memories to ensure stability and coherence.
+-   **`daydreaming.py`**: Implements `Daydreamer`. Handles the autonomous research loop and insight generation.
+
+### Memory System
+-   **`memory.py`**: The primary `MemoryStore`. Manages the SQLite database for long-term memories (`memories` table) and the FAISS vector index for semantic search.
+-   **`meta_memory.py`**: The `MetaMemoryStore`. Tracks events *about* memories (creation, updates, conflicts) to enable self-reflection.
+-   **`reasoning.py`**: The `ReasoningStore`. A transient buffer for working memory, hypotheses, and tool outputs. Items here expire after a TTL (Time-To-Live).
+-   **`memory_arbiter.py`**: The `MemoryArbiter`. A gatekeeper that evaluates new information from the Reasoning layer against confidence thresholds and precedence rules before promoting it to Long-Term Memory.
+-   **`memory_consolidator.py`**: The `MemoryConsolidator`. A background process that finds duplicate or related memories and links them (versioning) to prevent database bloat.
+
+### Document Handling (RAG)
+-   **`document_store_faiss.py`**: Manages the storage of document chunks and their embeddings. Uses FAISS for fast retrieval.
+-   **`document_processor.py`**: Handles file ingestion. Extracts text from PDF (via PyMuPDF) and DOCX, cleans it, and splits it into semantic chunks with overlap.
+
+### Infrastructure
+-   **`lm.py`**: The interface for the Local LLM (LM Studio). Handles API requests, vision payloads, and memory extraction prompts.
+-   **`telegram_api.py`**: Low-level wrapper for Telegram Bot API requests.
+-   **`event_bus.py`**: A simple Publish/Subscribe system that allows agents (Netzach, Decider, Hod) to communicate asynchronously without tight coupling.
+
+## ✨ Key Features
+
+### 1. Multi-Layered Memory
+-   **Chat Memory**: Short-term rolling context (last 20 messages).
+-   **Long-Term Memory**: Permanent storage for Facts, Goals, and Identity.
+-   **Meta-Memory**: Logs of *why* and *when* memories changed.
+-   **Reasoning Store**: Temporary storage for thoughts and tool outputs (TTL-based).
+
+### 2. Autonomous Daydreaming
+When not chatting, the AI enters "Daydream Mode". It will:
+-   Select a random document or memory.
+-   Generate new insights or hypotheses.
+-   Verify existing beliefs against documents.
+-   Consolidate duplicate information.
+
+### 3. Self-Correction & Verification
+The system includes a **Verifier** loop. It periodically checks "BELIEF" and "FACT" memories against source documents. If a memory is unsupported or hallucinated, it is removed, and a correction is logged in Meta-Memory.
+
+### 4. Multi-Modal Support
+You can send images via the Desktop UI or Telegram. The system uses vision-capable models (like `qwen2.5-vl`) to analyze them.
+
+### 5. Tools
+The Decider can autonomously execute:
+-   **Calculator**: For math operations.
+-   **Clock**: To check current time.
+-   **Dice**: For RNG.
+-   **System Info**: To check host machine stats.
+
+## 🛠️ Installation
+
+### Prerequisites
+1.  **Python 3.10+** recommended.
+2.  **LM Studio** (or compatible OpenAI-API local server):
+    - **Chat Model**: Load a smart instruction-tuned model (e.g., `Qwen2.5-VL-7B-Instruct`).
+    - **Embedding Model**: Load a text embedding model (e.g., `Nomic-Embed-Text-v1.5`).
+    - **Server**: Start the server on port `1234`.
+3.  **Telegram Bot** (Optional):
+    - Get a token from @BotFather.
+    - Get your Chat ID (the bot prints this in logs when you message it).
+
+### Setup
+1.  Clone the repository.
+2.  Install dependencies:
+    ```bash
+    pip install requests numpy faiss-cpu ttkbootstrap PyMuPDF python-docx Pillow pyinstaller
+    ```
+3.  Run the application:
+    ```bash
+    python desktop_assistant.py
+    ```
+
+## ⚙️ Configuration
+
+Configuration is managed via `settings.json` or the **Settings Tab** in the UI.
+
+| Category | Setting | Description | Default |
+| :--- | :--- | :--- | :--- |
+| **API** | `bot_token` | Telegram Bot Token | "" |
+| | `chat_id` | Your Telegram User ID | "" |
+| | `base_url` | LLM Server URL | `http://127.0.0.1:1234/v1` |
+| **Models** | `chat_model` | Model identifier string | `qwen2.5-vl...` |
+| | `embedding_model` | Embedding identifier string | `nomic-embed...` |
+| **System** | `ai_mode` | Startup mode ("Chat" or "Daydream") | "Daydream" |
+| | `telegram_bridge_enabled` | Enable/Disable Telegram | `true` |
+| | `theme` | UI Theme (Darkly, Cosmo, Cyborg) | "Darkly" |
+| **Generation** | `temperature` | Creativity (0.0 - 2.0) | 0.7 |
+| | `max_tokens` | Response length limit | 800 |
+| | `system_prompt` | Core personality instructions | (See file) |
+| **Memory** | `daydream_cycle_limit` | Cycles before pausing loop | 10 |
+| | `consolidation_thresholds` | Similarity required to merge | (Dict) |
+
+## 📦 Building an Executable (.exe)
+
+To create a standalone executable:
+
+1.  `pip install pyinstaller`
+2.  `pyinstaller --noconsole --onefile --name "AI_Assistant" desktop_assistant.py`
+3.  Copy `dist/AI_Assistant.exe` to your project folder.
+4.  Ensure `settings.json` and the `data/` folder are next to the `.exe`.
+
+## 🎮 Usage Guide
+
+### Modes
+-   **Chat Mode**: The AI pauses background research to respond instantly to you.
+-   **Daydream Mode**: The AI runs background loops. It might be reading or thinking. It will still reply to chat, but might finish its current thought first.
+
+### Commands
+You can control the system via natural language or slash commands.
+
+#### Natural Language
+-   "Research [topic]" -> Starts a Daydream loop on that topic.
+-   "Think about [topic]" -> Starts a Chain of Thought analysis.
+-   "Verify your facts" -> Runs the Verifier.
+-   "Summarize this session" -> Runs Hod's summarization.
+-   "Calculate 5 * 5" -> Uses Calculator tool.
+-   "Roll a dice" -> Uses Dice tool.
+
+#### Slash Commands
+**System Control**
+-   `/status`: View system state.
+-   `/stop`: Halt current processing.
+-   `/terminate_desktop`: Close the application.
+-   `/exitchatmode`: Disable Chat Mode and resume Daydreaming.
+-   `/decider [action]`: Manual control (e.g., `/decider up`, `/decider loop`).
+
+**Memory Management**
+-   `/memories`: List active memories.
+-   `/chatmemories`: List memories derived from chat only.
+-   `/metamemories`: Show memory logs (Meta-Cognition).
+-   `/memorystats`: Show statistics (verified counts, types).
+-   `/note [text]`: Save a permanent note manually.
+-   `/notes`: List all manual notes.
+-   `/consolidate`: Force memory consolidation.
+-   `/verify`: Run verification batch.
+-   `/verifyall`: Force verification of ALL memories against sources.
+
+**Documents**
+-   `/documents`: List uploaded files.
+-   `/doccontent "filename"`: Preview document content.
+-   `/removedoc "filename"`: Delete a document.
+
+**Maintenance**
+-   `/removesummaries`: Delete all session summaries.
+-   `/consolidatesummaries`: Merge multiple summaries into one.
+-   `/resetall`: **Factory Reset** (Wipes DB).
+-   `/resetchat`: Clear current chat window history.
+
+## 🖥️ UI Features
+
+-   **Chat Tab**: Main interface. Includes "Netzach Observations" panel at the bottom.
+-   **Logs Tab**: Real-time system logs.
+-   **Memory Database Tab**:
+    -   View Memories, Summaries, and Meta-Memories.
+    -   **Export Summaries**: Save session history to text file.
+    -   **Compress**: Manually trigger summary consolidation.
+-   **Documents Tab**:
+    -   Upload PDF/DOCX.
+    -   Search/Filter documents.
+    -   **Check Integrity**: Find and fix broken document chunks.
 
 ## 📝 License
 
