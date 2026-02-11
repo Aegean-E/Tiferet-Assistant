@@ -1,4 +1,6 @@
-# 🤖 AI Cognitive Assistant 2.2 (Event Bus Architecture)
+ # AI Desktop Assistant & Cognitive Architecture (Tree of Life)
+ 
+ **Version:** 2.3 (The Da'at Update)
 
 <div align="center">
 
@@ -11,42 +13,46 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-A standalone cognitive architecture desktop application that combines long-term memory, autonomous research (daydreaming), and multi-modal interaction via a local UI and Telegram. Designed to run locally with LM Studio.
+A sophisticated, local-first AI assistant featuring long-term memory, autonomous agency, and a cognitive architecture inspired by the Kabbalistic Tree of Life. Designed to run with local LLMs via LM Studio, ensuring privacy and control. It is designed to be more than a chatbot; it is a persistent digital assistant with a "Life Story". 
 
-## 🧠 Core Architecture
+ ## 🌟 Features
+ 
+ - **🧠 Long-Term Memory:** Uses a hybrid SQLite + FAISS vector database to store facts, goals, and interactions indefinitely.
+ - **🤖 Cognitive Architecture:** Implements a multi-agent system ("Tree of Life") where modules for creativity, logic, observation, and decision-making interact.
+ - **📚 Document RAG:** Upload PDF and DOCX files to build a knowledge base. The AI can read, cite, and synthesize information from your documents.
+ - **🔌 Telegram Bridge:** Connects to a Telegram Bot to allow remote interaction with your local AI.
+ - **🛠️ Tool Use:** Capable of executing Python code, performing physics calculations (Fermi Estimation), running causal inference simulations (DoWhy), and managing files.
+ - **☁️ Daydreaming:** When idle, the AI autonomously processes memories, consolidates knowledge, and generates new insights.
+ - **🧬 Meta-Learning:** Self-optimizes by extracting strategies from successes and analyzing failures to patch its own system prompts.
+ - **🔒 Privacy Focused:** Designed to work with local models (e.g., Qwen, Llama, Mistral) via LM Studio.
+ 
 
-This project implements a multi-agent cognitive architecture where specialized modules work in concert to maintain state, pursue goals, and learn continuously. It is designed to be more than a chatbot; it is a persistent digital assistant.
-
-### The Agents
-1.  **Decider (`decider.py`)**: The Executive Function.
-    - Controls the main cognitive loop.
-    - Determines the next action: Chat, Daydream, Verify, or Tool Use.
-    - Dynamically adjusts system parameters (Temperature, Max Tokens) based on context.
-    - **Tools**: Can autonomously use Calculator, Clock, Dice, and System Info.
-    
-2.  **Netzach (`continuousobserver.py`)**: The Observer.
-    - Runs in the background, monitoring logs and chat history.
-    - Detects stagnation, repetitive loops, or "boredom".
-    - Injects observations to "wake up" the Decider or suggest parameter changes.
-    - **Capabilities**: Can increase temperature if output is rigid, or request Hod to summarize if logs get too long.
-    
-3.  **Hod (`hod.py`)**: The Analyst.
-    - Performs post-process reflection.
-    - Analyzes logs to identify hallucinations or conflicts.
-    - Summarizes sessions into Meta-Memory to preserve context.
-    - Can request the Decider to prune invalid memories.
-    - **Self-Correction**: Can autonomously lower temperature or max tokens if instability is detected.
-    
-4.  **Chokhmah (`daydreaming.py`)**: The Daydreamer.
-    - Operates during idle time (when not chatting).
-    - Reads documents from the local library to generate new facts and goals.
-    - Synthesizes existing memories to generate new insights.
-    - **Modes**: `Auto` (Random), `Read` (Document focus), `Insight` (Memory synthesis).
-    
-5.  **Yesod (`telegram_api.py`)**: The Bridge.
-    - Manages the connection to the outside world via Telegram.
-    - Handles message polling and file downloads.
-
+ ## 🏗️ Architecture: The Tree of Life
+ 
+ The system is organized into interacting modules representing different cognitive faculties:
+ 
+ ### The Super-Conscious (Will & Intellect)
+ - **Keter (Crown):** The silent will. It measures the global "Coherence" of the system. It does not act but biases the strategy of the Decider. If coherence drops, Keter triggers a reasoning reboot.
+ - **Chokmah (Wisdom):** The spark of insight. The "Daydreamer" module. It runs when the system is idle, reading random documents or colliding old memories to generate new hypotheses.
+ - **Binah (Understanding):** The structure. It handles memory consolidation, deduplication, and association. It ensures that new information fits logically into the existing knowledge base.
+ - **Da'at (Knowledge):** The integrator.
+     - **Knowledge Graph:** Extracts RDF triples to build a conceptual map.
+     - **Synthesis:** Detects "Isomorphisms" (structural similarities) between unrelated topics.
+     - **Gap Analysis:** Identifies missing information and formulates questions.
+ 
+ ### The Emotional Forces (Balance)
+ - **Hesed (Mercy):** The force of expansion. It calculates a "Permission Budget" based on system stability, allowing the AI to explore new, unverified topics.
+ - **Gevurah (Severity):** The force of constraint. It applies pressure when the system becomes too chaotic, repetitive, or overloaded, forcing the Decider to prune memories or stop daydreaming.
+ - **Tiferet (Beauty/Decider):** The executive controller. It balances Hesed and Gevurah.
+     - **HTN Planning:** Decomposes complex goals into Hierarchical Task Networks.
+     - **Tool Use:** Executes actions (Search, Calculator, File I/O, Code, Physics).
+     - **Decision Making:** Determines whether to Chat, Daydream, or Verify.
+ 
+ ### The Operational Level (Action)
+ - **Netzach (Victory/Endurance):** The silent observer. A background thread that monitors the conversation flow. It detects stagnation (boredom) or loops and injects "signals" to nudge the Decider.
+ - **Hod (Glory/Reverberation):** The analyst. It runs *after* actions to critique them. It verifies facts against source documents, summarizes sessions, and flags hallucinations.
+ - **Yesod (Foundation):** The bridge. Manages the connection to the external world via the Telegram API.
+ - **Malkuth (Kingdom):** The physical realization. The Causal Engine responsible for real-world actions (Code execution, Physics checks, Causal Inference).
 ## 📂 Project Structure & File Descriptions
 
 ### Core Application
