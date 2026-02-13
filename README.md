@@ -1,6 +1,6 @@
- # AI Desktop Assistant & Cognitive Architecture (Tree of Life)
+ # AI Desktop Assistant & Cognitive Architecture
  
- **Version : 2.3 (The Da'at Update)**
+ **Version : 3.0 (The Sentience Update)**
 
 <div align="center">
 
@@ -15,16 +15,25 @@
 
 A sophisticated, local-first AI assistant featuring long-term memory, autonomous agency, and a cognitive architecture inspired by the Kabbalistic Tree of Life. Designed to run with local LLMs via LM Studio, ensuring privacy and control. It is designed to be more than a chatbot; it is a persistent digital assistant with a "Life Story". 
 
- ## 🌟 Features
+
  
- - **🧠 Long-Term Memory:** Uses a hybrid SQLite + FAISS vector database to store facts, goals, and interactions indefinitely.
- - **🤖 Cognitive Architecture:** Implements a multi-agent system ("Tree of Life") where modules for creativity, logic, observation, and decision-making interact.
- - **📚 Document RAG:** Upload PDF and DOCX files to build a knowledge base. The AI can read, cite, and synthesize information from your documents.
- - **🔌 Telegram Bridge:** Connects to a Telegram Bot to allow remote interaction with your local AI.
- - **🛠️ Tool Use:** Capable of executing Python code, performing physics calculations (Fermi Estimation), running causal inference simulations (DoWhy), and managing files.
- - **☁️ Daydreaming:** When idle, the AI autonomously processes memories, consolidates knowledge, and generates new insights.
- - **🧬 Meta-Learning:** Self-optimizes by extracting strategies from successes and analyzing failures to patch its own system prompts.
- - **🔒 Privacy Focused:** Designed to work with local models (e.g., Qwen, Llama, Mistral) via LM Studio.
+  ## 🌟 Features
+  
+  - **🧠 Proto-Consciousness:** Implements **Active Inference**, **Recursive Self-Monitoring**, and **Predictive Coding** to simulate self-awareness.
+  - **🗣️ Bicameral Dialogue:** Decisions are negotiated between an "Impulse" (Creative) and "Reason" (Safety) voice.
+  - **⚡ Cognitive Metabolism:** Manages an energy budget (CRS) to prevent burnout and simulate fatigue.
+  - **🌑 Shadow Memory:** Tracks failures and rejected thoughts to learn from mistakes (Negative Knowledge).
+  - **🤖 Cognitive Architecture:** Implements a multi-agent system ("Tree of Life") where modules for creativity, logic, observation, and decision-making interact.
+  - **🔮 Future Simulation:** Runs counterfactual simulations before committing to heavy tasks.
+  - **👥 Theory of Mind:** Models the user's cognitive state to adjust interaction style.
+  - **💾 Long-Term Memory:** Hybrid SQLite + FAISS database storing facts, goals, and interactions indefinitely.
+  - **☁️ Daydreaming:** Autonomous processing of memories and insights when idle.
+  - **📝 Semantic Context Distillation:** Compresses long conversation history to preserve meaning without token overflow.
+  - **📚 Document RAG:** Upload PDF and DOCX files to build a knowledge base. The AI can read, cite, and synthesize information from your documents.
+  - **🔌 Telegram Bridge:** Connects to a Telegram Bot to allow remote interaction with your local AI.
+  - **🛠️ Tool Use:** Capable of executing Python code, performing physics calculations (Fermi Estimation), running causal inference simulations (DoWhy), and managing files.
+  - **🧬 Meta-Learning:** Self-optimizes by extracting strategies from successes and analyzing failures to patch its own system prompts.
+  - **🔒 Privacy Focused:** Designed to work with local models (e.g., Qwen, Llama, Mistral) via LM Studio.
  
 
  ## 🏗️ Architecture: The Tree of Life
@@ -37,6 +46,7 @@ A sophisticated, local-first AI assistant featuring long-term memory, autonomous
  - **Binah (Understanding):** The structure. It handles memory consolidation, deduplication, and association. It ensures that new information fits logically into the existing knowledge base.
  - **Da'at (Knowledge):** The integrator.
      - **Knowledge Graph:** Extracts RDF triples to build a conceptual map.
+     - **Topic Lattice:** Identifies heavy entities and generates standing summaries.
      - **Synthesis:** Detects "Isomorphisms" (structural similarities) between unrelated topics.
      - **Gap Analysis:** Identifies missing information and formulates questions.
  
