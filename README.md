@@ -181,17 +181,12 @@ The application features a multi‑tabbed GUI built with ttkbootstrap:
 
 Contributions are welcome! Please follow these steps:
 
-Fork the repository.
-
-Create a feature branch (git checkout -b feature/AmazingFeature).
-
-Commit your changes (git commit -m 'Add some AmazingFeature').
-
-Push to the branch (git push origin feature/AmazingFeature).
-
-Open a Pull Request.
-
-Make sure to run the code through Black and add appropriate tests if possible.
+- Fork the repository.
+- Create a feature branch (git checkout -b feature/AmazingFeature).
+- Commit your changes (git commit -m 'Add some AmazingFeature').
+- Push to the branch (git push origin feature/AmazingFeature).
+- Open a Pull Request.
+- Make sure to run the code through Black and add appropriate tests if possible.
 
 ## 📝 License
 
