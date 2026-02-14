@@ -14,6 +14,7 @@ import json
 import os
 import re
 from datetime import datetime
+from collections import deque
 import subprocess
 import shutil
 from typing import Dict, List, Optional
@@ -29,13 +30,15 @@ except ImportError:
 # Import AI Core
 from ai_core.ai_core import AICore
 from ai_core.ai_controller import AIController
-from ai_core.lm import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT, transcribe_audio
-from treeoflife.chokmah import DAYDREAM_EXTRACTOR_PROMPT
+from ai_core.lm import transcribe_audio
+from docs.default_prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT, DAYDREAM_EXTRACTOR_PROMPT
 
 from bridges.telegram_api import TelegramBridge
 
 from ui import DesktopAssistantUI
 from docs.commands import handle_command as process_command_logic, NON_LOCKING_COMMANDS
+
+CURRENT_SETTINGS_VERSION = 1.1
 
 class UILogHandler(logging.Handler):
     """Redirects logging records to the UI's log method."""
@@ -59,6 +62,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
         self.settings_file_path = "./settings.json"
         self.settings_lock = threading.RLock()
 
+        # Initialize logging buffers early (migration might log)
+        self.log_buffer = deque(maxlen=5000)
+        self.debug_log_buffer = deque(maxlen=1000)
+
         # State
         self.settings = self.load_settings()
         self.telegram_bridge = None
@@ -75,6 +82,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
         
         # Initialize chat mode based on settings
         initial_mode = self.settings.get("ai_mode", "Daydream")
+        self.chat_mode_var = tk.StringVar(value=initial_mode)
         self.daydream_cycle_count = 0
         self.pending_confirmation_command = None
         self.is_recording = False
@@ -103,6 +111,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
         ui_handler = UILogHandler(self)
         ui_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
         self.logger.addHandler(ui_handler)
+        self.redirect_logging()
         
         # Redirect stdout/stderr to logging
         # self.redirect_logging() # Disabled in favor of standard logging
@@ -193,6 +202,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
             self.disconnect() # Stop telegram polling
             if hasattr(self, 'ai_core'):
                 self.ai_core.shutdown()
+            if hasattr(self, 'telegram_bridge') and self.telegram_bridge:
+                self.telegram_bridge.close()
+            if hasattr(self, 'ai_core') and self.ai_core.internet_bridge:
+                self.ai_core.internet_bridge.close()
             if hasattr(self, 'executor'):
                 self.executor.shutdown(wait=False, cancel_futures=True)
             self.root.destroy()
@@ -333,15 +346,16 @@ class DesktopAssistantApp(DesktopAssistantUI):
     def get_recent_main_logs(self) -> str:
         """Get last 15 lines of main logs for Netzach"""
         if hasattr(self, 'log_buffer'):
-            full_text = "".join([str(x) for x in self.log_buffer if x is not None])
-            lines = full_text.splitlines()
-            return "\n".join(lines[-15:])
+            # Convert deque to list to allow slicing, then join
+            buffer_list = [str(x) for x in self.log_buffer if x is not None]
+            return "\n".join(buffer_list[-15:])
         return ""
 
     def get_recent_doc_logs(self) -> str:
         """Get last 10 lines of document logs for Netzach"""
         if hasattr(self, 'debug_log_buffer'):
-            return "".join(self.debug_log_buffer[-10:])
+            # Deques do not support slicing. Convert to list first.
+            return "".join(list(self.debug_log_buffer)[-10:])
         return ""
 
     def get_current_status_text(self) -> str:
@@ -354,26 +368,31 @@ class DesktopAssistantApp(DesktopAssistantUI):
         if os.path.exists(settings_file):
             with open(settings_file, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
-                
-                # Auto-repair: Fix memory extractor prompt if it contains the old "echoes" rule
-                current_prompt = settings.get("memory_extractor_prompt", "")
-                if "echoes of the other party" in current_prompt or "SELF-CONTAINED" not in current_prompt or "Assistant's suggestions" not in current_prompt:
-                    logging.info("🔧 Auto-repairing memory extractor prompt in settings...")
-                    # Hardcoded correct prompt to ensure fix
-                    settings["memory_extractor_prompt"] = "Extract durable memories from the conversation. Return ONLY a valid JSON array.\n\nMemory Types (Apply to BOTH User and Assistant):\n- IDENTITY: Names, roles, locations, RELIGION (e.g., 'Assistant religion is Hinduism', 'Assistant is a Buddhist')\n- PREFERENCE: Likes/dislikes (e.g., 'User loves coffee', 'Assistant prefers inner peace')\n- GOAL: Specific, actionable objectives (e.g., 'User wants to learn Python', 'Assistant plans to analyze X'). Do NOT extract general statements like 'Future research should...' as GOALs.\n- FACT: Objective truths (e.g., 'User is an engineer', 'Assistant can process data')\n- BELIEF: Opinions/convictions (e.g., 'User believes AI is good', 'Assistant believes in meditation')\n- PERMISSION: Explicit user grants (e.g., 'User allowed Assistant to hold opinions')\n- RULE: Behavior guidelines (e.g., 'Assistant should not use emojis')\n\nRules:\n1. Extract from BOTH User AND Assistant.\n2. Each object MUST have: \"type\", \"subject\" (User or Assistant), \"text\".\n3. Use DOUBLE QUOTES for all keys and string values.\n4. Max 5 memories, max 240 chars each.\n5. EXCLUDE: Pure greetings (e.g., 'Hi'), questions, and filler. DO NOT exclude facts stated during introductions (e.g., 'Hi, I'm X').\n6. EXCLUDE generic assistant politeness (e.g., 'Assistant goal is to help', 'I'm here to help', 'feel free to ask').\n7. EXCLUDE contextual/situational goals (e.g., 'help with X topic' where X is current conversation topic).\n8. ONLY extract ASSISTANT GOALS if they represent true self-chosen objectives or explicit commitments.\n9. DO NOT extract facts from the Assistant's text if it is merely recalling known info. ALWAYS extract new facts from the User's text.\n10. ATTRIBUTION RULE: If User says 'I am X', subject is User. If Assistant says 'I am X', subject is Assistant. NEVER attribute User statements to Assistant.\n11. CRITICAL: DO NOT attribute Assistant's suggestions, lists, or hypothetical topics to the User. Only record User interests if the USER explicitly stated them.\n12. MAKE MEMORIES SELF-CONTAINED: Replace pronouns like 'This', 'These', 'It' with specific nouns. Ensure the text makes sense without the surrounding context.\n13. If no new memories, return [].\n"
-                    self.save_settings_to_file(settings)
-                
-                # Ensure defaults exist for Decider baselines to prevent drift
-                if "default_temperature" not in settings:
-                    settings["default_temperature"] = 0.7
-                if "default_max_tokens" not in settings:
-                    settings["default_max_tokens"] = 800
-                
-                return settings
+
+            # Auto-repair: Fix memory extractor prompt if it contains the old "echoes" rule
+            current_prompt = settings.get("memory_extractor_prompt", "")
+            if "echoes of the other party" in current_prompt or "SELF-CONTAINED" not in current_prompt or "Assistant's suggestions" not in current_prompt:
+                logging.info("🔧 Auto-repairing memory extractor prompt in settings...")
+                settings["memory_extractor_prompt"] = DEFAULT_MEMORY_EXTRACTOR_PROMPT
+                self.save_settings_to_file(settings)
+            
+            # Ensure defaults exist for Decider baselines to prevent drift
+            if "default_temperature" not in settings:
+                settings["default_temperature"] = 0.7
+            if "default_max_tokens" not in settings:
+                settings["default_max_tokens"] = 800
+            
+            # Version Migration
+            version = settings.get("version", 1.0)
+            if version < CURRENT_SETTINGS_VERSION:
+                settings = self.migrate_settings(settings, version)
+            
+            return settings
         else:
             # File missing: Create defaults and save
             logging.warning("⚠️ Settings file not found. Creating default settings.json...")
             defaults = {
+                "version": CURRENT_SETTINGS_VERSION,
                 "bot_token": "",
                 "chat_id": "",
                 "theme": "darkly",
@@ -408,6 +427,21 @@ class DesktopAssistantApp(DesktopAssistantUI):
             self.save_settings()
             return defaults
 
+    def migrate_settings(self, settings: Dict, old_version: float) -> Dict:
+        """Handle settings format changes between versions."""
+        self.log_to_main(f"🔄 Migrating settings from v{old_version} to v{CURRENT_SETTINGS_VERSION}...\n")
+        
+        if old_version < 1.1:
+            # Add new fields for v1.1
+            if "plugin_config" not in settings:
+                settings["plugin_config"] = {}
+            if "faiss_save_threshold" not in settings:
+                settings["faiss_save_threshold"] = 50
+            
+        settings["version"] = CURRENT_SETTINGS_VERSION
+        self.save_settings_to_file(settings)
+        return settings
+
     def save_settings(self):
         """Save settings to file"""
         with self.settings_lock:
@@ -428,6 +462,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def on_proactive_message(self, sender, msg):
         """Handle proactive messages from Daydreamer or Observer (Netzach)"""
+        # Filter out ingestion reports from the Netzach/Internal Thoughts window
+        if "Successfully ingested" in msg or "Failed to ingest" in msg or "Background Ingestion" in msg:
+            return
+
         # 1. Always log to AI Interactions (Netzach) window for transparency
         self.root.after(0, lambda: self.add_netzach_message(f"{sender}: {msg}"))
 
@@ -580,7 +618,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                         # Verify a batch
                         concurrency = int(self.settings.get("concurrency", 4))
                         removed = self.hod.verify_sources(batch_size=10000, concurrency=concurrency, stop_check_fn=lambda: self.controller.stop_processing_flag)
-                        total_removed += removed
+                        total_removed += len(removed)
                         
                         # Refresh UI to show progress
                         self.root.after(0, self.refresh_database_view)
@@ -928,14 +966,16 @@ class DesktopAssistantApp(DesktopAssistantUI):
         if self.telegram_bridge:
             self.telegram_bridge.send_message("🛑 Disrupting current process...")
         
-        self.stop_processing_flag = True
+        if self.controller:
+            self.controller.stop_processing_flag = True
         
-        if self.decider:
-            self.decider.report_forced_stop()
+        if self.ai_core and self.ai_core.decider:
+            self.ai_core.decider.report_forced_stop()
             
         def reset_flag():
             time.sleep(1.5) 
-            self.stop_processing_flag = False
+            if self.controller:
+                self.controller.stop_processing_flag = False
             logging.info("▶️ Decider ready for next turn (Cooldown active).")
             if self.telegram_bridge:
                 self.telegram_bridge.send_message("▶️ Process disrupted. Decider is in cooldown.")
@@ -985,6 +1025,46 @@ class DesktopAssistantApp(DesktopAssistantUI):
         except Exception as e:
             logging.error(f"Error handling photo: {e}")
 
+    def handle_telegram_voice(self, msg: Dict):
+        """Handle voice message from Telegram"""
+        try:
+            file_id = msg["voice"]["file_id"]
+            chat_id = msg["chat_id"]
+            
+            self.root.after(0, lambda: self.status_var.set("🎙️ Receiving voice message..."))
+            
+            file_data = self.telegram_bridge.get_file_info(file_id)
+            telegram_file_path = file_data["file_path"]
+            
+            temp_dir = "./data/temp_uploads"
+            os.makedirs(temp_dir, exist_ok=True)
+            local_file_path = os.path.join(temp_dir, f"voice_{file_id}.ogg")
+            
+            self.telegram_bridge.download_file(telegram_file_path, local_file_path)
+            
+            self.root.after(0, lambda: self.status_var.set("📝 Transcribing voice..."))
+            text = transcribe_audio(local_file_path)
+            
+            if text and not text.startswith("[Error"):
+                self.root.after(0, lambda: self.add_chat_message(msg["from"], f"🎙️ {text}", "incoming"))
+                threading.Thread(
+                    target=self.process_message_thread,
+                    args=(text, False, chat_id),
+                    daemon=True
+                ).start()
+            else:
+                self.telegram_bridge.send_message(f"⚠️ Sorry, I couldn't transcribe that voice message: {text}")
+                
+            if os.path.exists(local_file_path):
+                os.remove(local_file_path)
+                
+        except Exception as e:
+            logging.error(f"Error handling Telegram voice: {e}")
+            if self.telegram_bridge:
+                self.telegram_bridge.send_message(f"❌ Error processing voice message: {str(e)}")
+        finally:
+            self.root.after(0, lambda: self.status_var.set("Ready"))
+
     def upload_documents(self):
         """Upload documents via GUI"""
         file_paths = filedialog.askopenfilenames(
@@ -1003,11 +1083,15 @@ class DesktopAssistantApp(DesktopAssistantUI):
             success_count = 0
             total_files = len(file_paths)
 
-            # Only log if debug_log has been initialized
             if hasattr(self, 'debug_log'):
                 self.log_debug_message(f"Starting upload of {total_files} document(s)")
 
             for i, file_path in enumerate(file_paths):
+                # Check for stop signal
+                if self.controller and self.controller.stop_check():
+                    self.log_debug_message("Upload interrupted by stop signal.")
+                    break
+
                 try:
                     filename = os.path.basename(file_path)
                     if hasattr(self, 'debug_log'):
@@ -1053,10 +1137,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 self.log_debug_message(f"Upload complete: {success_count}/{total_files} documents processed successfully")
 
             # Update UI in main thread
-            self.root.after(0, lambda: self.refresh_documents())  # This will update original_docs
+            self.root.after(0, lambda: self.refresh_documents())
             self.root.after(0, lambda: self.status_var.set(f"Uploaded {success_count} documents"))
 
-        threading.Thread(target=upload_thread, daemon=True).start()
+        self.ai_core.thread_pool.submit(upload_thread)
 
     def process_message_thread(self, user_text: str, is_local: bool, telegram_chat_id=None, image_path: str = None):
         """Delegate to controller"""
@@ -1073,10 +1157,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
             items = self.memory_store.list_recent(limit=None)
             # Filter for NOTE type
             notes = [item for item in items if item[1] == "NOTE"]
-            
+
             # Also fetch Self-Knowledge (Rules about self)
             self_knowledge = [item for item in items if item[4] == "meta_learner_self_model"]
-            
+
             # Fetch Self-Narratives (Autobiography) from Meta-Memory
             narratives = []
             if self.meta_memory_store:
@@ -1093,17 +1177,17 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
             # 2. Create File Content
             content = "ASSISTANT JOURNAL\n=================\n\n"
-            
+
             # Add Narratives (The Story)
             for n in narratives:
                 date_str = datetime.fromtimestamp(n['created_at']).strftime("%Y-%m-%d %H:%M")
                 content += f"[{date_str}] [SELF-NARRATIVE]\n{n['text']}\n\n"
-            
+
             # Add Notes (The Thoughts)
             for note in notes:
                 # note: (id, type, subject, text, ...)
                 content += f"Entry [ID:{note[0]}]:\n{note[3]}\n\n" + ("-"*30) + "\n\n"
-                
+
             # Add Self-Knowledge (The Rules)
             if self_knowledge:
                 content += "SELF-KNOWLEDGE (LEARNED RULES)\n==============================\n"
@@ -1115,7 +1199,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             os.makedirs(docs_dir, exist_ok=True)
             filename = "assistant_journal.txt"
             file_path = os.path.join(docs_dir, filename)
-            
+
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
@@ -1124,11 +1208,11 @@ class DesktopAssistantApp(DesktopAssistantUI):
             old_id = self.document_store.get_document_by_filename(filename)
             if old_id:
                 self.document_store.delete_document(old_id)
-            
+
             # Process and Add
             file_hash = self.document_store.compute_file_hash(file_path)
             chunks, page_count, file_type = self.document_processor.process_document(file_path)
-            
+
             self.document_store.add_document(
                 file_hash=file_hash,
                 filename=filename,
@@ -1138,10 +1222,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 chunks=chunks,
                 upload_source="journal_sync"
             )
-            
+
             self.refresh_documents()
             messagebox.showinfo("Journal Sync", f"Journal synced to documents ({len(notes)} entries).")
-            
+
         except Exception as e:
             messagebox.showerror("Journal Sync Error", f"Failed to sync journal: {e}")
 

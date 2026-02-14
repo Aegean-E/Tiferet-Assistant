@@ -9,7 +9,7 @@
   "base_url": "http://127.0.0.1:1234/v1",
   "chat_model": "qwen2.5-vl-7b-instruct-abliterated",
   "embedding_model": "text-embedding-nomic-embed-text-v1.5",
-  "temperature": 0.64,
+  "temperature": 0.84,
   "top_p": 0.94,
   "max_tokens": 1024,
   "daydream_cycle_limit": 10,
@@ -33,7 +33,7 @@
   "context_window": 4096,
   "system_prompt_fitness": 0.8125,
   "self_improvement_prompt": "",
-  "current_mood": 0.4812402095238094,
+  "current_mood": 0.4815402095238093,
   "permissions": {
     "SEARCH": true,
     "WIKI": true,
@@ -49,5 +49,8 @@
     "READ_CHUNK": true,
     "DESCRIBE_IMAGE": true,
     "WRITE_FILE": true
-  }
+  },
+  "plugin_config": {},
+  "faiss_save_threshold": 50,
+  "version": 1.1
 }
