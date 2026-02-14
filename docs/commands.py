@@ -72,7 +72,8 @@ def handle_command(app: Any, text: str, chat_id: int) -> Optional[str]:
             app.pending_confirmation_command = None
             
             if pending_cmd in RESET_CHAT:
-                app.chat_memory[chat_id] = []
+                if app.current_session_id:
+                    app.chat_sessions[app.current_session_id]['history'] = []
                 return "♻️ Chat history cleared."
 
             if pending_cmd in RESET_MEMORY:
@@ -88,7 +89,8 @@ def handle_command(app: Any, text: str, chat_id: int) -> Optional[str]:
                 return "🧠 Meta-memories cleared."
 
             if pending_cmd in RESET_ALL:
-                app.chat_memory[chat_id] = []
+                if app.current_session_id:
+                    app.chat_sessions[app.current_session_id]['history'] = []
                 app.reasoning_store.clear()
                 app.memory_store.clear()
                 app.meta_memory_store.clear()

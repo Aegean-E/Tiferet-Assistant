@@ -21,6 +21,7 @@ try:
     import faiss
     FAISS_AVAILABLE = True
 except ImportError:
+    logging.warning("⚠️ FAISS not installed. Install with: pip install faiss-cpu")
     FAISS_AVAILABLE = False
     logging.warning("⚠️ FAISS not installed. Install with: pip install faiss-cpu")
 
@@ -35,15 +36,19 @@ class FaissDocumentStore:
     """
 
     def __init__(self, db_path: str = "./data/documents_faiss.sqlite3", embed_fn=None):
-        if not FAISS_AVAILABLE:
-            raise ImportError("FAISS is required for this document store. Install with: pip install faiss-cpu")
-            
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
         self.embed_fn = embed_fn
         self.faiss_index = None
         self.index_lock = threading.Lock()
         self._init_db()
+        
+        # Load FAISS configuration from settings (assuming self.core.get_settings is available or passed)
+        settings = self._load_settings() # Temporary load for init
+        self.faiss_index_type = settings.get("faiss_index_type", "IndexFlatIP")
+        self.faiss_nlist = settings.get("faiss_nlist", 100) # For IndexIVFFlat
+        self.faiss_nprobe = settings.get("faiss_nprobe", 10)
+
         self._load_faiss_index()
         self._sync_faiss_index()
 
@@ -144,8 +149,24 @@ class FaissDocumentStore:
         dimension = self._detect_embedding_dimension()
         with self.index_lock:
             logging.info(f"🔧 Creating FAISS index with dimension: {dimension}")
-            # Use IndexIDMap to store IDs directly
-            self.faiss_index = faiss.IndexIDMap(faiss.IndexFlatIP(dimension))
+            if self.faiss_index_type == "IndexIVFFlat":
+                # For IndexIVFFlat, we need to train the index
+                quantizer = faiss.IndexFlatIP(dimension)
+                self.faiss_index = faiss.IndexIDMap(faiss.IndexIVFFlat(quantizer, dimension, self.faiss_nlist, faiss.METRIC_INNER_PRODUCT))
+                # Training will happen when the first batch of embeddings is added
+            else:
+                # Default to IndexFlatIP
+                self.faiss_index = faiss.IndexIDMap(faiss.IndexFlatIP(dimension))
+
+    def _load_settings(self):
+        # This is a temporary local load for init, as AICore might not be fully ready
+        # In a real scenario, settings would be passed or accessed via a central config manager
+        try:
+            with open("./settings.json", 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.warning(f"⚠️ Could not load settings.json for FAISS config: {e}. Using defaults.")
+            return {}
             
     def _detect_embedding_dimension(self):
         """Detect the embedding dimension from the model"""
@@ -197,16 +218,32 @@ class FaissDocumentStore:
         if not embeddings:
             return
             
-        # Convert to numpy array
-        embeddings_array = np.array(embeddings).astype('float32')
+        # Defensive check for inhomogeneous shapes
+        valid_embeddings = []
+        valid_ids = []
+        expected_dim = self.faiss_index.d if self.faiss_index else None
+        
+        for emb, cid in zip(embeddings, chunk_ids):
+            if expected_dim is None or len(emb) == expected_dim:
+                valid_embeddings.append(emb)
+                valid_ids.append(cid)
+        
+        if not valid_embeddings: return
+        embeddings_array = np.array(valid_embeddings).astype('float32')
         
         # Normalize for inner product search
         faiss.normalize_L2(embeddings_array)
         
         with self.index_lock:
+            # Train IndexIVFFlat if not already trained
+            if self.faiss_index_type == "IndexIVFFlat" and not self.faiss_index.is_trained:
+                logging.info(f"🔧 Training FAISS IndexIVFFlat with {len(embeddings)} vectors (nlist={self.faiss_nlist})...")
+                # Ensure enough data for training
+                if len(embeddings_array) >= self.faiss_nlist:
+                    self.faiss_index.train(embeddings_array)
             if self.faiss_index:
                 # Add to index
-                ids_array = np.array(chunk_ids).astype('int64')
+                ids_array = np.array(valid_ids).astype('int64')
                 self.faiss_index.add_with_ids(embeddings_array, ids_array)
         
         # Save index
@@ -497,8 +534,18 @@ class FaissDocumentStore:
             query_array = query_embedding.reshape(1, -1).astype('float32')
             faiss.normalize_L2(query_array)
 
+            # Set nprobe for IVF indexes
+            if self.faiss_index_type == "IndexIVFFlat":
+                try:
+                    inner_index = faiss.downcast_index(self.faiss_index.index)
+                    inner_index.nprobe = self.faiss_nprobe
+                except:
+                    pass
+
             # Search using FAISS
+            t_faiss = time.time()
             scores, indices = self.faiss_index.search(query_array, min(top_k * 2, self.faiss_index.ntotal))
+            logging.debug(f"⏱️ [Docs] FAISS search took {time.time()-t_faiss:.3f}s")
         
         # Get chunk IDs from mapping
         results = []
@@ -543,117 +590,6 @@ class FaissDocumentStore:
                 valid_results += 1
 
         return results
-
-    def search_diverse_chunks(
-        self,
-        query_embedding: np.ndarray,
-        top_k: int = 5,
-        max_per_doc: int = 2
-    ) -> List[Dict]:
-        """
-        Cross-Document Context Search.
-        Searches for chunks but enforces diversity by limiting results per document.
-        Useful for finding links between disparate papers.
-        """
-        # Fetch more results initially to allow for filtering
-        raw_results = self.search_chunks(query_embedding, top_k=top_k * 4)
-        
-        diverse_results = []
-        doc_counts = {}
-        
-        for res in raw_results:
-            doc_id = res['document_id']
-            count = doc_counts.get(doc_id, 0)
-            
-            if count < max_per_doc:
-                diverse_results.append(res)
-                doc_counts[doc_id] = count + 1
-                
-            if len(diverse_results) >= top_k:
-                break
-                
-        return diverse_results
-
-    def search_hybrid(self, query_text: str, query_embedding: np.ndarray, top_k: int = 5) -> List[Dict]:
-        """
-        Combines FAISS (Semantic) and FTS5 (Keyword) results using Reciprocal Rank Fusion.
-        """
-        # 1. Get Semantic Results (FAISS)
-        # Request more results for fusion
-        semantic_results = self.search_chunks(query_embedding, top_k=top_k * 2)
-        
-        # 2. Get Keyword Results (FTS5)
-        keyword_results = []
-        try:
-            with self._connect() as con:
-                # Sanitize query for FTS5 (simple sanitization)
-                safe_query = query_text.replace('"', '""')
-                rows = con.execute("""
-                    SELECT rowid, text, rank 
-                    FROM chunks_fts 
-                    WHERE chunks_fts MATCH ? 
-                    ORDER BY rank LIMIT ?
-                """, (f"\"{safe_query}\"", top_k * 2)).fetchall()
-                
-                for r in rows:
-                    keyword_results.append({'chunk_id': r[0], 'text': r[1]})
-        except Exception as e:
-            logging.error(f"⚠️ FTS5 Search failed: {e}")
-            # Fallback to just semantic results if FTS fails
-            return semantic_results[:top_k]
-
-        # 3. Reciprocal Rank Fusion (RRF)
-        scores = {}
-        k_const = 60
-        
-        # Map chunk_id to semantic item for later retrieval
-        semantic_map = {item['chunk_id']: item for item in semantic_results}
-        
-        for rank, item in enumerate(semantic_results):
-            chunk_id = item['chunk_id']
-            scores[chunk_id] = scores.get(chunk_id, 0) + (1 / (k_const + rank))
-            
-        for rank, item in enumerate(keyword_results):
-            chunk_id = item['chunk_id']
-            scores[chunk_id] = scores.get(chunk_id, 0) + (1 / (k_const + rank))
-
-        # 4. Sort and Fetch Final Details
-        sorted_ids = sorted(scores, key=scores.get, reverse=True)[:top_k]
-        
-        final_results = []
-        
-        # Fetch details for IDs that might only be in keyword results (not in semantic_map)
-        missing_ids = [cid for cid in sorted_ids if cid not in semantic_map]
-        fetched_map = {}
-        
-        if missing_ids:
-            # Reuse existing method logic or query directly. Querying directly for efficiency.
-            with self._connect() as con:
-                placeholders = ','.join(['?'] * len(missing_ids))
-                rows = con.execute(f"""
-                    SELECT c.id, c.document_id, c.chunk_index, c.text, c.page_number, d.filename
-                    FROM chunks c
-                    JOIN documents d ON c.document_id = d.id
-                    WHERE c.id IN ({placeholders})
-                """, missing_ids).fetchall()
-                
-                for r in rows:
-                    fetched_map[r[0]] = {
-                        'chunk_id': r[0], 'document_id': r[1], 'chunk_index': r[2],
-                        'text': r[3], 'page_number': r[4], 'filename': r[5], 'similarity': 0.0
-                    }
-        
-        for cid in sorted_ids:
-            if cid in semantic_map:
-                item = semantic_map[cid]
-                item['rrf_score'] = scores[cid]
-                final_results.append(item)
-            elif cid in fetched_map:
-                item = fetched_map[cid]
-                item['rrf_score'] = scores[cid]
-                final_results.append(item)
-                
-        return final_results
 
     # --------------------------
     # Document Queries
@@ -720,6 +656,30 @@ class FaissDocumentStore:
                     pass
             results.append(item)
 
+        return results
+
+    def get_specific_chunks(self, document_id: int, indices: List[int], include_embeddings: bool = False) -> List[Dict]:
+        """Retrieve specific chunks by their indices within a document."""
+        if not indices: return []
+        
+        placeholders = ','.join(['?'] * len(indices))
+        query = f"SELECT chunk_index, text, page_number"
+        if include_embeddings:
+            query += ", embedding"
+        query += f" FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders}) ORDER BY chunk_index ASC"
+        
+        with self._connect() as con:
+            rows = con.execute(query, [document_id] + indices).fetchall()
+            
+        results = []
+        for r in rows:
+            item = {
+                'chunk_index': r[0],
+                'text': r[1],
+                'page_number': r[2]
+            }
+            # ... (embedding handling if needed)
+            results.append(item)
         return results
 
     def get_chunk_by_index(self, document_id: int, chunk_index: int) -> Optional[Dict]:
