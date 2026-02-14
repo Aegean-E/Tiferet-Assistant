@@ -1,8 +1,13 @@
 import logging
+import sqlite3
 import threading
 import time
+import os
 from typing import Callable, Dict, List, Optional
+import shutil
 import concurrent.futures
+from types import SimpleNamespace
+from typing import Dict, Callable, Optional, List, Any
 
 from .lm import compute_embedding, run_local_lm
 
@@ -115,6 +120,7 @@ class AICore:
         self.heartbeat = None
         self.drive_system = None
         self.last_narrative_update = 0
+        self.last_backup_time = 0
         self.global_workspace = None
 
         self.current_embedding_model = self.get_settings().get("embedding_model")
@@ -196,6 +202,32 @@ class AICore:
         if self.drive_system:
             self.drive_system.satisfy_drive("loneliness", 1.0) # Full satisfaction
 
+    def backup_databases(self):
+        """Create a timestamped backup of all SQLite databases."""
+        backup_dir = "./data/backups"
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        db_files = [
+            "memory.sqlite3",
+            "meta_memory.sqlite3",
+            "reasoning.sqlite3",
+            "documents_faiss.sqlite3"
+        ]
+        
+        self.log(f"💾 AICore: Starting database backup to {backup_dir}...")
+        for db_file in db_files:
+            src = os.path.join("./data", db_file)
+            if os.path.exists(src):
+                dst = os.path.join(backup_dir, f"{os.path.splitext(db_file)[0]}_{timestamp}.sqlite3")
+                try:
+                    shutil.copy2(src, dst)
+                except Exception as e:
+                    self.log(f"⚠️ Failed to backup {db_file}: {e}")
+        
+        self.last_backup_time = time.time()
+        self.log("✅ AICore: Backup complete.")
+
     def run_cognitive_metabolism(self):
         """
         Cognitive Metabolism Loop.
@@ -235,6 +267,12 @@ class AICore:
         self.thread_pool.shutdown(wait=False, cancel_futures=True)
         self.log("✅ AICore: Shutdown complete.")
 
+    def _connect(self) -> sqlite3.Connection:
+        """Helper to get a thread-local SQLite connection."""
+        # This is a placeholder. In a real scenario, you'd use a connection pool
+        # or threading.local to manage connections per thread.
+        return sqlite3.connect(":memory:") # Example: in-memory DB for testing
+
     def _maintain_homeostasis(self):
         """Update internal metabolic state."""
         if not self.self_model or not self.memory_store: return
@@ -272,6 +310,16 @@ class AICore:
             if entropy > 0.6:
                 self.log(f"📉 Metabolism: High Entropy ({entropy:.2f}) forcing CRS Fatigue.")
         
+        # 3. PERIODIC BACKUP (Every 24 hours)
+        if time.time() - self.last_backup_time > 86400:
+            self.backup_databases()
+
+        # 4. PERIODIC FAISS REPAIR (Every 30 minutes)
+        if time.time() - getattr(self, '_last_faiss_repair', 0) > 1800:
+            if self.memory_store:
+                self.thread_pool.submit(self.memory_store._sync_faiss_index)
+            self._last_faiss_repair = time.time()
+
         # Triggers
         if entropy > 0.7:
             self.log(f"🔥 High Entropy ({entropy:.2f}). Triggering cleanup.")

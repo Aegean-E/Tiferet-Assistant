@@ -388,6 +388,11 @@ class MetaLearner:
         Bayesian-inspired optimization for scalar hyperparameters.
         Uses recent utility/coherence history to estimate gradient.
         """
+        # Optimization: Only run this periodically or if performance is critical
+        if time.time() - getattr(self, '_last_hpo_run', 0) < 3600: # Run at most once per hour
+            return
+        self._last_hpo_run = time.time()
+
         # Target metric: Coherence Delta or Utility
         outcomes = self.meta_memory_store.get_outcomes(limit=100)
         if len(outcomes) < 20: return
@@ -490,6 +495,11 @@ class MetaLearner:
         # Run a sample to save time/cost
         sample = random.sample(dataset, min(len(dataset), 5))
         
+        # Optimization: Run on full dataset less frequently
+        if time.time() - getattr(self, '_last_golden_full_run', 0) > 86400: # Once per day
+            sample = dataset # Use full dataset
+            self._last_golden_full_run = time.time()
+
         for item in sample:
             question = item.get("question")
             expected_answer = item.get("expected_answer") # Or key facts
@@ -1239,12 +1249,20 @@ class MetaLearner:
                     dna["gevurah_constraint_bias"] = min(5.0, dna.get("gevurah_constraint_bias", 1.0) + 0.1)
                     self.self_model.update_epigenetics(dna)
                     self.log(f"🛡️ Epigenetics: Increased Gevurah bias due to factual feedback.")
+                
+                # Adjust mood (Cortisol spike)
+                if self.stability_controller and hasattr(self.stability_controller.core, 'decider'):
+                    self.stability_controller.core.decider._update_mood(-0.1)
             
             elif rating > 0:
                 # Positive feedback -> slowly decay social alignment to avoid over-pleasing
                 new_alignment = max(0.1, current_alignment - 0.02)
                 self.self_model.update_drive("social_alignment", new_alignment)
                 self.log(f"⚖️ SelfModel: Adjusted social_alignment to {new_alignment:.2f} due to positive feedback.")
+
+                # Adjust mood (Dopamine hit)
+                if self.stability_controller and hasattr(self.stability_controller.core, 'decider'):
+                    self.stability_controller.core.decider._update_mood(0.05)
 
     def _calculate_correlation(self, x: List[float], y: List[float]) -> float:
         """Calculate Pearson correlation coefficient."""

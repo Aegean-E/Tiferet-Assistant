@@ -93,7 +93,7 @@ class EventBus:
             if len(self._event_counts) >= self._event_budget:
                 # Budget exceeded: Drop low priority events
                 if priority < 10: # Critical threshold
-                    # logging.warning(f"⚠️ EventBus: Rate limit exceeded. Dropping '{event_type}' (Priority {priority})")
+                    logging.warning(f"⚠️ EventBus: Rate limit exceeded. Dropping '{event_type}' from {source} (Priority {priority})")
                     
                     self._metrics["dropped_events"] += 1
                     return
@@ -106,7 +106,7 @@ class EventBus:
         if q_size > self._load_shedding_threshold:
             # If queue is backed up, only accept high priority
             if priority < 5:
-                # logging.warning(f"⚠️ EventBus: High load ({q_size}). Dropping '{event_type}'")
+                logging.warning(f"⚠️ EventBus: High load ({q_size}). Dropping '{event_type}' from {source}")
                 
                 self._metrics["dropped_events"] += 1
                 return

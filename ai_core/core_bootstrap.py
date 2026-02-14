@@ -572,10 +572,10 @@ class BootstrapManager:
             self.core.event_bus.subscribe("DAAT:SYNTHESIZE", lambda e: self.core.daat.run_cross_domain_synthesis() if self.core.daat else None)
             self.core.event_bus.subscribe("SYSTEM:PANIC", lambda e: self.core.decider.on_panic(e) if self.core.decider else None)
             self.core.event_bus.subscribe("SYSTEM:SPONTANEOUS_SPEECH", lambda e: self.core.log(f"🗣️ Event Bus: Spontaneous Speech Triggered -> {e.data.get('context')}"))
-            
+
             # Trigger initial analysis
             if self.core.hod:
-                threading.Thread(target=self.core.hod.reflect, args=("System Startup",), daemon=True).start()
+                self.core.thread_pool.submit(self.core.hod.reflect, "System Startup")
             
             # Restore Identity
             self.core.identity_manager.restore_subjective_continuity()

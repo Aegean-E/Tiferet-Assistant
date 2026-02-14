@@ -42,9 +42,9 @@ class ActionManager:
             "WRITE_FILE": lambda q: self._write_file_tool(q),
             
             # 2. Internet Tools
-            "SEARCH": lambda q: self.safe_search(q, "WEB"), # Now maps to DuckDuckGo
-            "WIKI": lambda q: self.safe_search(q, "WIKIPEDIA"),
-            "FIND_PAPER": lambda q: self.safe_search(q, "ARXIV"),
+            "SEARCH": lambda q="": self.safe_search(q or "", "WEB"), # Now maps to DuckDuckGo
+            "WIKI": lambda q="": self.safe_search(q or "", "WIKIPEDIA"),
+            "FIND_PAPER": lambda q="": self.safe_search(q or "", "ARXIV"),
         }
         
         # Add enabled dynamic tools
@@ -72,18 +72,31 @@ class ActionManager:
         """Load tools from a plugins directory."""
         if not os.path.exists(plugin_dir): return
         
+        settings = self.core.get_settings()
+        plugin_settings = settings.get("plugin_config", {})
+        
         import importlib.util
         
         for filename in os.listdir(plugin_dir):
             if filename.endswith(".py") and not filename.startswith("_"):
                 path = os.path.join(plugin_dir, filename)
+                plugin_name = filename[:-3]
+                
+                # Security: Check if plugin is explicitly enabled in settings
+                is_enabled = plugin_settings.get(plugin_name, False)
+                
+                if not is_enabled:
+                    self.core.log(f"🛡️ Plugin '{plugin_name}' found but is DISABLED. Enable it in Settings.")
+                    self._plugin_registry[plugin_name] = {'enabled': False, 'description': "Awaiting user approval"}
+                    continue
+
                 try:
-                    spec = importlib.util.spec_from_file_location(filename[:-3], path)
+                    spec = importlib.util.spec_from_file_location(plugin_name, path)
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                     
                     if hasattr(module, "register_tools"):
-                        self._current_loading_plugin = filename[:-3]
+                        self._current_loading_plugin = plugin_name
                         module.register_tools(self)
                         self._current_loading_plugin = None
                         self.core.log(f"🔌 Loaded plugin: {filename}")
@@ -121,7 +134,7 @@ class ActionManager:
                 return "[Error: Tool execution limit reached for this turn]"
             
             tool_name = match.group(1).upper()
-            args = match.group(2)
+            args = match.group(2) or ""
             
             # Check Permission
             settings = self.core.get_settings()

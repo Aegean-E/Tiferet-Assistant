@@ -10,8 +10,9 @@ class GlobalWorkspace:
     def __init__(self, core):
         self.core = core
         self.current_focus = None
-        self.last_update = 0
+        self.last_update = time.time()
         self.update_interval = 10 # Seconds
+        self.last_broadcast = time.time()
 
     def update(self):
         """
@@ -41,12 +42,18 @@ class GlobalWorkspace:
                 if drive == "loneliness": weight = 1.2
                 
                 if isinstance(value, (int, float)):
+                    s_val = value
+                    content_prefix = "High"
+                    if drive == "cognitive_energy":
+                        s_val = 1.0 - value
+                        content_prefix = "Low"
+
                     candidates.append({
                         "type": "DRIVE",
-                        "content": f"High {drive} ({value:.2f})",
-                        "salience": value * weight,
-                        "urgency": value,
-                        "novelty": 0.5, # Static for drives
+                        "content": f"{content_prefix} {drive} ({value:.2f})",
+                        "salience": s_val * weight,
+                        "urgency": s_val,
+                        "novelty": 0.5,  # Static for drives
                         "data": {drive: value}
                     })
 
@@ -114,8 +121,13 @@ class GlobalWorkspace:
         winner = candidates[0]
 
         # Broadcast to all modules
-        if self.current_focus != winner["content"] or winner["final_salience"] > 0.8:
+        is_new_focus = self.current_focus != winner["content"]
+        is_urgent = winner["final_salience"] > 0.95
+        time_since_last = time.time() - self.last_broadcast
+
+        if is_new_focus or (is_urgent and time_since_last > 60):
             self.current_focus = winner["content"]
+            self.last_broadcast = time.time()
             self.broadcast(winner)
 
     def broadcast(self, content: Dict[str, Any]):

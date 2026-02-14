@@ -30,11 +30,13 @@ class AIController:
         self.consecutive_crashes = 0
         self.stream_lock = threading.Lock()
         self.stream_of_consciousness = [] # Short-term buffer of "Thoughts"
-        self.last_spoke_time = 0
+        self.last_spoke_time = time.time() # Prevent immediate startup messaging
         self.speech_cooldown = 300 # 5 minutes
         self.is_thinking = False # Flag for internal monologue generation
         self.raw_consciousness_buffer = []
         self.buffer_lock = threading.Lock()
+        self.last_user_model_build_count = 0
+        self.last_self_theory_build_count = 0
         self.threads = {}
 
     def start_background_loops(self):
@@ -309,7 +311,7 @@ class AIController:
                 # Send to Telegram if applicable
                 if self.app.is_connected() and self.app.settings.get("telegram_bridge_enabled", False) and self.app.chat_mode_var.get():
                     # If local user typed it, send to Telegram
-                    if is_local:
+                    if is_local and self.app.settings.get("telegram_bridge_echo_local_messages", False): # New setting to control echoing local messages
                         self.app.telegram_bridge.send_message(f"Desktop: {user_text}") # Optional: echo user text
                         self.app.telegram_bridge.send_message(reply)
                     # If it came from Telegram, just send the reply
@@ -343,7 +345,7 @@ class AIController:
                 if time.time() - last_health_log > 60:
                     last_health_log = time.time()
                     self._log_health_status()
-                    
+
                     # Check thread health
                     for name, t in self.threads.items():
                         if not t.is_alive():
@@ -406,9 +408,9 @@ class AIController:
                 # Watchdog: Check for coma state every 60 seconds
                 if time.time() - last_watchdog_check > 60:
                     last_watchdog_check = time.time()
-                    heartbeat = self.ai_core.heartbeat
+                    heartbeat = self.ai_core.heartbeat # Local reference
                     if heartbeat and getattr(heartbeat, 'current_task', None) == "wait":
-                        # If waiting for > 1 minute (60s)
+                        # If waiting for > 1 minute (60s) and decider exists
                         if self.ai_core.heartbeat.wait_start_time > 0 and (time.time() - self.ai_core.heartbeat.wait_start_time > 60):
                             logging.info("⏰ Watchdog: System dormant for >1m. Forcing Pulse.")
                             if self.ai_core.decider:
@@ -417,7 +419,7 @@ class AIController:
                 # Check if Decider has work to do
                 # We check heartbeat state without locking first to avoid contention during idle
                 is_active_task = False
-                heartbeat = self.ai_core.heartbeat
+                heartbeat = self.ai_core.heartbeat # Local reference
                 if heartbeat and getattr(heartbeat, 'current_task', None) != "wait":
                     is_active_task = True
                 
@@ -437,7 +439,7 @@ class AIController:
                             if self.is_processing:
                                 continue
                             
-                            heartbeat = self.ai_core.heartbeat
+                            heartbeat = self.ai_core.heartbeat # Local reference
                             if heartbeat and hasattr(heartbeat, 'current_task'):
                                 self.is_processing = True
                                 try:
@@ -447,6 +449,8 @@ class AIController:
                                     status_msg = f"Active: {task} ({remaining} left)"
                                     self.app.root.after(0, lambda: self.app.status_var.set(status_msg))
                                     
+                                    if self.stop_processing_flag or self.pause_daydream_flag: break
+
                                     # 1. Perception & Monologue (Stream of Consciousness)
                                     if self.ai_core.yesod and self.ai_core.decider and self.ai_core.self_model:
                                         hesed = self.ai_core.hesed.calculate() if self.ai_core.hesed and hasattr(self.ai_core.hesed, 'calculate') else 0.5
@@ -456,6 +460,8 @@ class AIController:
                                         
                                         affect_desc = self.ai_core.yesod.calculate_affective_state(hesed, gevurah, energy, coherence)
                                         
+                                        if self.stop_processing_flag or self.pause_daydream_flag: break
+
                                         # Add to stream (deduplicate consecutive)
                                         thought = f"[State] {affect_desc}"
                                         with self.stream_lock:
@@ -652,6 +658,10 @@ class AIController:
                 if self.ai_core.document_store and hasattr(self.ai_core.document_store, 'optimize'):
                     self.ai_core.document_store.optimize()
 
+                # Periodic Reasoning Store Pruning
+                if self.ai_core.reasoning_store and hasattr(self.ai_core.reasoning_store, 'prune'):
+                    self.ai_core.reasoning_store.prune()
+
                 # Da'at Topic Lattice (Entity Summarization)
                 if self.ai_core.daat and hasattr(self.ai_core.daat, 'run_topic_lattice'):
                     self.ai_core.daat.run_topic_lattice()
@@ -674,10 +684,17 @@ class AIController:
 
                 self.ai_core.generate_daily_self_narrative()
                     
-                # Update User Model (Yesod)
-                if self.ai_core.yesod and hasattr(self.ai_core.yesod, 'build_user_model'):
-                    self.ai_core.yesod.build_user_model()
-                    self.ai_core.yesod.build_self_theory()
+                # Update User Model & Self Theory (Yesod)
+                # Only rebuild if there are new memories to analyze
+                if self.ai_core.yesod and self.ai_core.memory_store:
+                    current_mem_count = self.ai_core.memory_store.count_all()
+                    
+                    if current_mem_count > self.last_user_model_build_count:
+                        if hasattr(self.ai_core.yesod, 'build_user_model'):
+                            self.ai_core.yesod.build_user_model()
+                        if hasattr(self.ai_core.yesod, 'build_self_theory'):
+                            self.ai_core.yesod.build_self_theory()
+                        self.last_user_model_build_count = current_mem_count
                     
                 # Update Life Story (Da'at)
                 if self.ai_core.daat and hasattr(self.ai_core.daat, 'update_life_story'):
