@@ -18,23 +18,30 @@ class TelegramBridge:
         self.last_update_id = None
         self.session = requests.Session()
 
-    def _send_message_chunk(self, text):
-        url = f"{BASE_URL}{self.bot_token}/sendMessage"
-        response = self.session.post(url, json={
-            "chat_id": self.chat_id,
-            "text": text
-        }, timeout=30)
-        response.raise_for_status()
+    def _send_message_chunk(self, text) -> bool:
+        try:
+            url = f"{BASE_URL}{self.bot_token}/sendMessage"
+            response = self.session.post(url, json={
+                "chat_id": self.chat_id,
+                "text": text
+            }, timeout=30)
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            self.log(f"⚠️ Chunk send failed: {e}")
+            return False
 
     def send_message(self, text: str) -> bool:
         """Send message to Telegram"""
         try:
             if not text: return False
             limit = 3072
+            all_success = True
             for i in range(0, len(text), limit):
                 chunk = text[i:i + limit]
-                self._send_message_chunk(chunk)
-            return True
+                if not self._send_message_chunk(chunk):
+                    all_success = False
+            return all_success
         except Exception as e:
             self.log(f"❌ Telegram send error: {e}")
             return False

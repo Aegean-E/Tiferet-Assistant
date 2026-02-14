@@ -197,6 +197,10 @@ class InternetBridge:
         except Exception as e:
             return f"❌ Internet Bridge Error: {e}", None
 
+    def close(self):
+        """Close the requests session."""
+        if self.session:
+            self.session.close()
     def _search_wikipedia(self, query: str) -> Tuple[str, Optional[str]]:
         content = self._do_wikipedia_search(query)
         if "ℹ️" in content or "❌" in content:
