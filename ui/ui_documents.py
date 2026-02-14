@@ -1,4 +1,5 @@
 import tkinter as tk
+import logging
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from tkinter import messagebox
@@ -87,6 +88,10 @@ class DocumentsUI:
         report_button = ttk.Button(docs_buttons_frame, text="Gen. Report", 
                                    command=self.generate_document_report, bootstyle="info")
         report_button.pack(side=tk.LEFT, padx=(5, 0))
+        
+        rebuild_button = ttk.Button(docs_buttons_frame, text="Rebuild Index", 
+                                   command=self.rebuild_index, bootstyle="warning")
+        rebuild_button.pack(side=tk.LEFT, padx=(5, 0))
 
         # Clear log button on the right side
         clear_log_button = ttk.Button(docs_buttons_frame, text="Clear Log", command=self.clear_debug_log,
@@ -235,60 +240,74 @@ class DocumentsUI:
 
     def refresh_documents(self):
         """Refresh documents list"""
-        if not hasattr(self, 'document_store'):
+        if not getattr(self, 'document_store', None):
             return
         
-        # Get total count and list
-        total_docs = self.document_store.get_total_documents()
-        all_docs = self.document_store.list_documents(limit=5000)
+        def fetch_data():
+            try:
+                # Get total count and list
+                total_docs = self.document_store.get_total_documents()
+                all_docs = self.document_store.list_documents(limit=5000)
+                
+                # Get stats for logging
+                total_chunks = self.document_store.get_total_chunks()
+                orphans = self.document_store.get_orphaned_chunk_count()
+                
+                # Update UI on main thread
+                self.root.after(0, lambda: self._update_docs_ui(all_docs, total_docs, total_chunks, orphans))
+            except Exception as e:
+                logging.error(f"Error refreshing documents: {e}")
 
-        # Store original documents
-        self.original_docs = all_docs
+        threading.Thread(target=fetch_data, daemon=True).start()
 
-        # Clear current tree
-        for item in self.docs_tree.get_children():
-            self.docs_tree.delete(item)
+    def _update_docs_ui(self, all_docs, total_docs, total_chunks, orphans):
+        """Update the documents UI with fetched data"""
+        try:
+            # Store original documents
+            self.original_docs = all_docs
 
-        # Add documents to tree
-        for doc in all_docs:
-            doc_id, filename, file_type, page_count, chunk_count, created_at = doc
-            date_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M")
-            page_info = str(page_count) if page_count else "N/A"
+            # Clear current tree
+            for item in self.docs_tree.get_children():
+                self.docs_tree.delete(item)
 
-            self.docs_tree.insert("", "end", values=(
-                doc_id,
-                filename,
-                file_type.upper(),
-                page_info,
-                chunk_count,
-                date_str
-            ))
+            # Add documents to tree
+            for doc in all_docs:
+                doc_id, filename, file_type, page_count, chunk_count, created_at = doc
+                date_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M")
+                page_info = str(page_count) if page_count else "N/A"
 
-        # Reset sort directions and heading arrows
-        columns = ("ID", "Filename", "Type", "Pages", "Chunks", "Date Added")
-        for col in columns:
-            self.sort_directions[col] = False
-            self.docs_tree.heading(col, text=f"{col} ↕")
+                self.docs_tree.insert("", "end", values=(
+                    doc_id,
+                    filename,
+                    file_type.upper(),
+                    page_info,
+                    chunk_count,
+                    date_str
+                ))
 
-        # Calculate Max ID to show user (explains gaps)
-        max_id = 0
-        if all_docs:
-            max_id = max(doc[0] for doc in all_docs)
+            # Reset sort directions and heading arrows
+            columns = ("ID", "Filename", "Type", "Pages", "Chunks", "Date Added")
+            for col in columns:
+                self.sort_directions[col] = False
+                self.docs_tree.heading(col, text=f"{col} ↕")
 
-        # Update results label
-        if len(all_docs) < total_docs:
-            self.results_var.set(f"Showing {len(all_docs)} of {total_docs} docs (Limit: 5000) | Max ID: {max_id}")
-        else:
-            self.results_var.set(f"Showing all {len(all_docs)} docs | Max ID: {max_id}")
+            # Calculate Max ID to show user (explains gaps)
+            max_id = max(doc[0] for doc in all_docs) if all_docs else 0
 
-        # Only log if debug_log has been initialized
-        if hasattr(self, 'debug_log'):
-            total_chunks = self.document_store.get_total_chunks()
-            orphans = self.document_store.get_orphaned_chunk_count()
-            msg = f"Refreshed document list: {len(all_docs)} documents loaded (Total Docs: {total_docs}, Total Chunks: {total_chunks})"
-            if orphans > 0:
-                msg += f" [⚠️ {orphans} Orphaned Chunks]"
-            self.log_debug_message(msg)
+            # Update results label
+            if len(all_docs) < total_docs:
+                self.results_var.set(f"Showing {len(all_docs)} of {total_docs} docs (Limit: 5000) | Max ID: {max_id}")
+            else:
+                self.results_var.set(f"Showing all {len(all_docs)} docs | Max ID: {max_id}")
+
+            # Only log if debug_log has been initialized
+            if hasattr(self, 'debug_log'):
+                msg = f"Refreshed document list: {len(all_docs)} documents loaded (Total Docs: {total_docs}, Total Chunks: {total_chunks})"
+                if orphans > 0:
+                    msg += f" [⚠️ {orphans} Orphaned Chunks]"
+                self.log_debug_message(msg)
+        except Exception as e:
+            logging.error(f"Error updating docs UI: {e}")
 
     def filter_documents(self, event=None):
         """Filter documents based on search term"""
@@ -389,6 +408,23 @@ class DocumentsUI:
             self.refresh_documents()  # This will update original_docs
             self.status_var.set(f"Deleted {deleted_count} documents")
 
+    def rebuild_index(self):
+        """Rebuild FAISS index from DB"""
+        if not getattr(self, 'document_store', None): return
+        
+        if messagebox.askyesno("Rebuild Index", "This will wipe the FAISS index and rebuild it from the SQLite database. This may take a while for large datasets. Continue?"):
+            def run_rebuild():
+                self.root.after(0, lambda: self.status_var.set("Rebuilding index..."))
+                try:
+                    self.document_store.optimize() # optimize calls _rebuild_index
+                    self.root.after(0, lambda: messagebox.showinfo("Success", "Index rebuilt successfully."))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to rebuild index: {e}"))
+                finally:
+                    self.root.after(0, lambda: self.status_var.set("Ready"))
+            
+            threading.Thread(target=run_rebuild, daemon=True).start()
+
     def check_document_integrity(self):
         """Check for broken or incomplete documents"""
         if not hasattr(self.document_store, 'find_broken_documents'):
@@ -403,6 +439,7 @@ class DocumentsUI:
 
         # Check for ghost files (files on disk not in DB)
         ghost_files = []
+        # Only check the application's specific upload directory
         upload_dir = "./data/uploaded_docs"
         if os.path.exists(upload_dir):
             # Get all filenames in DB (case insensitive for Windows safety)
@@ -451,7 +488,7 @@ class DocumentsUI:
                             os.remove(os.path.join(upload_dir, f))
                             ghosts_deleted += 1
                         except Exception as e:
-                            print(f"Error deleting ghost file {f}: {e}")
+                            logging.error(f"Error deleting ghost file {f}: {e}")
 
             self.refresh_documents()
             messagebox.showinfo("Cleanup", f"🗑️ Cleanup Report:\n- {deleted_count} broken documents removed from DB\n- {orphans_deleted} orphaned chunks removed from DB\n- {ghosts_deleted} ghost files deleted from disk")
@@ -544,4 +581,4 @@ class DocumentsUI:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate report: {e}")
-            print(f"Report generation error: {e}")
+            logging.error(f"Report generation error: {e}")

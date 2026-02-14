@@ -5,12 +5,17 @@ from ttkbootstrap.constants import *
 import threading
 import os
 from datetime import datetime
+import logging
 
 class MemoryDatabaseUI:
     """Mixin for Memory Database UI tab"""
 
     def setup_database_tab(self):
         """Setup database viewer interface"""
+        # Pagination State
+        self.db_page = 0
+        self.db_page_size = 50
+
         # Database Notebook (Memories vs Meta-Memories)
         db_notebook = ttk.Notebook(self.database_frame)
         db_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -19,36 +24,16 @@ class MemoryDatabaseUI:
         refresh_button = ttk.Button(self.database_frame, text="🔄 Refresh", command=self.refresh_database_view,
                                     bootstyle="secondary")
         refresh_button.place(relx=1.0, x=-5, y=2, anchor="ne")
+        
+        # Export Memories button (Placed to the left of Refresh)
+        export_mem_button = ttk.Button(self.database_frame, text="💾 Export Memories", command=self.export_memories,
+                                   bootstyle="info")
+        export_mem_button.place(relx=1.0, x=-105, y=2, anchor="ne")
 
-        # Compress Summaries button (Placed to the left of Refresh)
-        self.compress_button = ttk.Button(self.database_frame, text="🗜️ Compress", command=self.compress_summaries,
-                                   bootstyle="info-outline")
-        self.compress_button.place(relx=1.0, x=-95, y=2, anchor="ne")
-
-        # Export Summaries button (Placed to the left of Refresh)
+        # Export Summaries button (Placed to the left of Export Memories)
         export_button = ttk.Button(self.database_frame, text="💾 Export Summaries", command=self.export_summaries,
                                    bootstyle="info")
-        export_button.place(relx=1.0, x=-185, y=2, anchor="ne")
-
-        # Verify All button (Placed to the left of Export)
-        verify_all_button = ttk.Button(self.database_frame, text="🧹 Verify All", command=self.verify_all_memory_sources,
-                                       bootstyle="warning")
-        verify_all_button.place(relx=1.0, x=-325, y=2, anchor="ne")
-
-        # Verify Batch button (Placed to the left of Verify All)
-        verify_button = ttk.Button(self.database_frame, text="🧹 Verify Sources", command=self.verify_memory_sources,
-                                   bootstyle="warning")
-        verify_button.place(relx=1.0, x=-425, y=2, anchor="ne")
-
-        # Stop Verification button (Placed to the left of Verify Sources)
-        stop_verify_button = ttk.Button(self.database_frame, text="🛑 Stop", command=self.stop_processing,
-                                        bootstyle="danger")
-        stop_verify_button.place(relx=1.0, x=-535, y=2, anchor="ne")
-
-        # Sync Journal button (Placed to the left of Stop)
-        sync_journal_button = ttk.Button(self.database_frame, text="📓 Sync Journal", command=self.sync_journal,
-                                        bootstyle="success-outline")
-        sync_journal_button.place(relx=1.0, x=-615, y=2, anchor="ne")
+        export_button.place(relx=1.0, x=-245, y=2, anchor="ne")
 
         # Stats Label (Verified / Total)
         # Moved to notebook header (tab bar) via place() and event binding
@@ -75,9 +60,9 @@ class MemoryDatabaseUI:
         db_notebook.add(daydream_memories_frame, text="Daydream Memories")
         self.daydream_memories_scrollable_frame = self._setup_scrollable_frame(daydream_memories_frame)
 
-        # Journal Tab (formerly Assistant Notes)
+        # Chronicles Tab (formerly Journal/Assistant Notes)
         notes_frame = ttk.Frame(db_notebook)
-        db_notebook.add(notes_frame, text="Journal")
+        db_notebook.add(notes_frame, text="Chronicles")
         self.notes_scrollable_frame = self._setup_scrollable_frame(notes_frame)
 
         # Meta-Memories Tab
@@ -88,9 +73,7 @@ class MemoryDatabaseUI:
             meta_frame,
             state=tk.DISABLED,
             wrap=tk.WORD,
-            font=("Segoe UI Emoji", 10) if os.name == 'nt' else ("Arial", 10),
-            bg="#1e1e1e",
-            fg="white"
+            font=("Segoe UI Emoji", 10) if os.name == 'nt' else ("Arial", 10)
         )
         self.meta_memories_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
@@ -109,6 +92,17 @@ class MemoryDatabaseUI:
                 self.stats_label.place_forget()
         except Exception:
             pass
+
+    def next_db_page(self):
+        self.db_page += 1
+        self.page_label.config(text=f"Page {self.db_page + 1}")
+        self.refresh_database_view()
+
+    def prev_db_page(self):
+        if self.db_page > 0:
+            self.db_page -= 1
+            self.page_label.config(text=f"Page {self.db_page + 1}")
+            self.refresh_database_view()
 
     def _setup_scrollable_frame(self, parent_frame):
         """Helper to setup a scrollable frame structure"""
@@ -143,7 +137,7 @@ class MemoryDatabaseUI:
 
     def refresh_database_view(self):
         """Refresh the database views"""
-        if not hasattr(self, 'memory_store') or not hasattr(self, 'meta_memory_store'):
+        if not getattr(self, 'memory_store', None) or not getattr(self, 'meta_memory_store', None):
             return
 
         # Update status immediately
@@ -153,18 +147,17 @@ class MemoryDatabaseUI:
         def fetch_data():
             try:
                 # Fetch data in background thread
-                mem_items = self.memory_store.list_recent(limit=None)
+                mem_items = self.memory_store.list_recent(limit=self.db_page_size, offset=self.db_page * self.db_page_size)
+                stats = self.memory_store.get_memory_stats()
                 
                 # Calculate stats
-                total_count = len(mem_items)
-                verified_count = sum(1 for item in mem_items if len(item) > 5 and item[5] == 1)
-                unverified_beliefs = sum(1 for item in mem_items if item[1] == 'BELIEF' and (len(item) <= 5 or item[5] == 0) and len(item) > 4 and item[4] == 'daydream')
-                unverified_facts = sum(1 for item in mem_items if item[1] == 'FACT' and (len(item) <= 5 or item[5] == 0) and len(item) > 4 and item[4] == 'daydream')
-                stats_text = f"Total: {total_count} | Verified: {verified_count} | Unverified Beliefs: {unverified_beliefs} | Unverified Facts: {unverified_facts}"
+                stats_text = f"Total: {stats.get('total_memories', 0)} | Unverified Beliefs: {stats.get('unverified_beliefs', 0)} | Unverified Facts: {stats.get('unverified_facts', 0)} | Goals: {stats.get('active_goals', 0)}"
 
                 # Fetch Summaries
                 summaries = self.meta_memory_store.get_by_event_type("SESSION_SUMMARY", limit=30)
                 analyses = self.meta_memory_store.get_by_event_type("HOD_ANALYSIS", limit=30)
+                narratives = self.meta_memory_store.get_by_event_type("SELF_NARRATIVE", limit=30)
+                
                 summary_items = summaries + analyses
                 summary_items.sort(key=lambda x: x['created_at'], reverse=True)
 
@@ -172,7 +165,7 @@ class MemoryDatabaseUI:
                 meta_items = self.meta_memory_store.list_recent(limit=75)
 
                 # Schedule UI update on main thread
-                self.root.after(0, lambda: self._update_database_ui(mem_items, stats_text, summary_items, meta_items))
+                self.root.after(0, lambda: self._update_database_ui(mem_items, stats_text, summary_items, meta_items, narratives))
 
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Refresh Error", f"Failed to refresh data: {e}"))
@@ -181,7 +174,7 @@ class MemoryDatabaseUI:
         # Start background thread
         threading.Thread(target=fetch_data, daemon=True).start()
 
-    def _update_database_ui(self, mem_items, stats_text, summary_items, meta_items):
+    def _update_database_ui(self, mem_items, stats_text, summary_items, meta_items, narratives=None):
         """Update UI elements with fetched data (Main Thread)"""
         try:
             # 1. Clear existing widgets
@@ -202,18 +195,41 @@ class MemoryDatabaseUI:
             system_sources = {
                 'daydream', 'chokmah_gap_investigation', 'autonomous_curiosity', 
                 'daat_lattice', 'daat_cluster', 'daat_synthesis', 
-                'architect_decomposition', 'decider_autonomous', 'hod_verification',
-                'model_stress', 'model_revision', 'agency_loop', 'meta_learner'
+                'architect_decomposition', 'decider_autonomous', 'hod_verification', 'hod',
+                'model_stress', 'model_revision', 'agency_loop', 'meta_learner', 
+                'malkuth_tool', 'malkuth_edit', 'daat_growth_arc', 'daat_growth_restore',
+                'meta_learner_self_model', 'meta_learner_rl'
             }
 
             for item in mem_items:
                 source = item[4] if len(item) > 4 else ''
+                text = item[3] if len(item) > 3 else ''
+                
+                # Skip empty memories
+                if not text or not text.strip():
+                    continue
+
                 if item[1] == "NOTE":
                     note_items.append(item)
+                elif source == "meta_learner_self_model":
+                    # Override type for display
+                    new_item = list(item)
+                    new_item[1] = "SELF-KNOWLEDGE"
+                    note_items.append(tuple(new_item))
+                elif source in ["daat_life_story_update", "daat_growth_arc", "daat_growth_restore"]:
+                    new_item = list(item)
+                    new_item[1] = "NARRATIVE"
+                    note_items.append(tuple(new_item))
                 elif source in system_sources or source.startswith('autonomous_reading') or source.startswith('synthesis') or source.startswith('daat'):
                     daydream_items.append(item)
                 else:
                     chat_items.append(item)
+
+            # Add narratives to note_items (Chronicles)
+            if narratives:
+                for n in narratives:
+                    # Convert dict to tuple: (id, type, subject, text, source)
+                    note_items.append((n['id'], "NARRATIVE", n['subject'], n['text'], "meta_memory"))
 
             self._populate_memory_tab(self.chat_memories_scrollable_frame, chat_items)
             self._populate_memory_tab(self.daydream_memories_scrollable_frame, daydream_items)
@@ -234,11 +250,19 @@ class MemoryDatabaseUI:
             if not meta_items:
                 self.meta_memories_text.insert(tk.END, "🧠 No meta-memories.")
             else:
-                for (_id, event_type, subject, text, created_at) in meta_items:
+                for item in meta_items:
+                    # Handle variable length tuples (legacy vs new)
+                    _id = item[0]
+                    event_type = item[1]
+                    subject = item[2]
+                    text = item[3]
+                    created_at = item[4]
+                    affect = item[5] if len(item) > 5 else None
+                    
                     event_emoji = {
                         "MEMORY_CREATED": "✨", "VERSION_UPDATE": "🔄", "DECIDER_CHAT": "💬",
-                        "CONFLICT_DETECTED": "⚠️", "CONSOLIDATION": "🔗", "HOD_ANALYSIS": "🔮",
-                        "SESSION_SUMMARY": "📅"
+                        "CONFLICT_DETECTED": "⚠️", "CONSOLIDATION": "🔗", "HOD_ANALYSIS": "🔮", 
+                        "SESSION_SUMMARY": "📅", "SELF_NARRATIVE": "📖"
                     }.get(event_type, "🧠")
 
                     try:
@@ -246,16 +270,20 @@ class MemoryDatabaseUI:
                     except:
                         date_str = str(created_at)
 
-                    self.meta_memories_text.insert(tk.END, f"[{date_str}] {event_emoji} [{subject}] {text}\n")
+                    affect_str = ""
+                    if affect is not None:
+                        affect_str = f" (Mood: {affect:.2f})"
+
+                    self.meta_memories_text.insert(tk.END, f"[{date_str}] {event_emoji} [{subject}] {text}{affect_str}\n")
             
             self.meta_memories_text.config(state=tk.DISABLED)
             self.status_var.set("Ready")
         except Exception as e:
-            print(f"UI Update Error: {e}")
+            logging.error(f"UI Update Error: {e}")
 
     def export_summaries(self):
         """Export session summaries to a text file"""
-        if not hasattr(self, 'meta_memory_store'):
+        if not getattr(self, 'meta_memory_store', None):
             messagebox.showerror("Error", "Meta-memory store not initialized.")
             return
 
@@ -263,8 +291,9 @@ class MemoryDatabaseUI:
             # Fetch all summaries
             summaries = self.meta_memory_store.get_by_event_type("SESSION_SUMMARY", limit=1000)
             analyses = self.meta_memory_store.get_by_event_type("HOD_ANALYSIS", limit=1000)
+            narratives = self.meta_memory_store.get_by_event_type("SELF_NARRATIVE", limit=1000)
             
-            all_items = summaries + analyses
+            all_items = summaries + analyses + narratives
             all_items.sort(key=lambda x: x['created_at'], reverse=True)
 
             if not all_items:
@@ -286,7 +315,12 @@ class MemoryDatabaseUI:
                 
                 for item in all_items:
                     date_str = datetime.fromtimestamp(item['created_at']).strftime("%Y-%m-%d %H:%M:%S")
-                    type_str = "SUMMARY" if item.get('event_type') == "SESSION_SUMMARY" else "ANALYSIS"
+                    if item.get('event_type') == "SESSION_SUMMARY":
+                        type_str = "SUMMARY"
+                    elif item.get('event_type') == "HOD_ANALYSIS":
+                        type_str = "ANALYSIS"
+                    else:
+                        type_str = "NARRATIVE"
                     subject = item.get('subject', 'Unknown')
                     
                     f.write(f"[{date_str}] [{type_str}] [{subject}]\n")
@@ -298,42 +332,69 @@ class MemoryDatabaseUI:
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export summaries: {e}")
 
-    def compress_summaries(self):
-        """Trigger summary consolidation"""
-        if hasattr(self, 'daat') and self.daat:
-            # Disable button to prevent multiple clicks
-            if hasattr(self, 'compress_button'):
-                self.compress_button.config(state=tk.DISABLED)
+    def export_memories(self):
+        """Export all memories to a text file"""
+        if not getattr(self, 'memory_store', None):
+            messagebox.showerror("Error", "Memory store not initialized.")
+            return
+
+        try:
+            # Fetch all memories
+            # list_recent returns (id, type, subject, text, source, verified, flags, confidence)
+            all_items = self.memory_store.list_recent(limit=None)
             
-            # Update status
-            if hasattr(self, 'status_var'):
-                self.status_var.set("Compressing summaries... (This may take a while)")
+            if not all_items:
+                messagebox.showinfo("Export", "No memories to export.")
+                return
 
-            # Run in background to avoid freezing UI
-            def run_compression():
-                try:
-                    result = self.daat.consolidate_summaries()
-                    self.root.after(0, lambda: messagebox.showinfo("Compression", result))
-                except Exception as e:
-                    self.root.after(0, lambda: messagebox.showerror("Error", f"Compression failed: {e}"))
-                finally:
-                    self.root.after(0, self.refresh_database_view)
-                    if hasattr(self, 'compress_button'):
-                        self.root.after(0, lambda: self.compress_button.config(state=tk.NORMAL))
-                    if hasattr(self, 'status_var'):
-                        self.root.after(0, lambda: self.status_var.set("Ready"))
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                title="Export Memories"
+            )
 
-            threading.Thread(target=run_compression, daemon=True).start()
-        else:
-            messagebox.showerror("Error", "Da'at not initialized.")
+            if not file_path:
+                return
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write("ACTIVE MEMORIES EXPORT\n")
+                f.write("======================\n\n")
+                
+                for item in all_items:
+                    # item: (id, type, subject, text, source, verified, flags, confidence)
+                    _id, mtype, subject, text = item[:4]
+                    source = item[4] if len(item) > 4 else "unknown"
+                    conf = item[7] if len(item) > 7 else 0.0
+                    
+                    f.write(f"[{mtype}] [{subject}] (ID:{_id}, Conf:{conf:.2f})\n")
+                    f.write(f"{text}\n")
+                    f.write(f"Source: {source}\n")
+                    f.write("-" * 50 + "\n\n")
+
+            messagebox.showinfo("Export", f"Successfully exported {len(all_items)} memories to {os.path.basename(file_path)}")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export memories: {e}")
 
     def _create_summary_card(self, parent, item):
         """Create a card for a session summary"""
         date_str = datetime.fromtimestamp(item['created_at']).strftime("%Y-%m-%d %H:%M")
         
         # Different style for Hod Analysis
-        style_color = "info" if item.get('event_type') == "SESSION_SUMMARY" else "secondary"
-        prefix = "📅" if item.get('event_type') == "SESSION_SUMMARY" else "🔮"
+        event_type = item.get('event_type')
+        
+        if event_type == "SESSION_SUMMARY":
+            style_color = "info"
+            prefix = "📅"
+        elif event_type == "HOD_ANALYSIS":
+            style_color = "secondary"
+            prefix = "🔮"
+        elif event_type == "SELF_NARRATIVE":
+            style_color = "success"
+            prefix = "📖"
+        else:
+            style_color = "secondary"
+            prefix = "📝"
         
         text = f"{prefix} {date_str} - {item['subject']}"
         
@@ -366,8 +427,10 @@ class MemoryDatabaseUI:
             "IDENTITY": "👤", "FACT": "📌", "PREFERENCE": "❤️",
             "GOAL": "🎯", "RULE": "⚖️", "PERMISSION": "✅", "BELIEF": "💭",
             "NOTE": "📓",
+            "NARRATIVE": "📖",
             "REFUTED_BELIEF": "🛡️",
-            "COMPLETED_GOAL": "🏁"
+            "COMPLETED_GOAL": "🏁",
+            "SELF-KNOWLEDGE": "🧠"
         }
 
         grouped = {}
@@ -376,7 +439,7 @@ class MemoryDatabaseUI:
             _id, mem_type, subject, text = item[:4]
             grouped.setdefault(mem_type, []).append((_id, subject, text))
 
-        hierarchy = ["NOTE", "PERMISSION", "RULE", "IDENTITY", "PREFERENCE", "GOAL", "COMPLETED_GOAL", "FACT", "BELIEF", "REFUTED_BELIEF"]
+        hierarchy = ["NARRATIVE", "NOTE", "SELF-KNOWLEDGE", "PERMISSION", "RULE", "IDENTITY", "PREFERENCE", "GOAL", "COMPLETED_GOAL", "FACT", "BELIEF", "REFUTED_BELIEF"]
 
         for mem_type in hierarchy:
             if mem_type in grouped:
@@ -411,11 +474,11 @@ class MemoryDatabaseUI:
                 menu.add_command(label=f"❌ Delete Memory ID: {mem_id}", command=lambda: self.delete_memory_action(mem_id))
                 menu.tk_popup(event.x_root, event.y_root)
         except Exception as e:
-            print(f"Right-click error: {e}")
+            logging.error(f"Right-click error: {e}")
 
     def delete_memory_action(self, mem_id):
         """Delete a memory by ID and refresh view"""
-        if not hasattr(self, 'memory_store'):
+        if not getattr(self, 'memory_store', None):
             return
 
         if messagebox.askyesno("Confirm Delete", f"Are you sure you want to permanently delete memory ID {mem_id}?"):
@@ -443,12 +506,18 @@ class MemoryDatabaseUI:
         # Container for the whole section
         container = ttk.Frame(parent)
         container.pack(fill=tk.X, expand=False, padx=5, pady=2)
+        
+        # Store items for lazy loading
+        container.items = items
 
         # Content container (holds canvas + scrollbar)
         content_container = ttk.Frame(container)
 
         # Toggle state
         is_open = tk.BooleanVar(value=True)
+
+        # Lazy load flag
+        is_loaded = [False] # Mutable closure hack
 
         def toggle():
             if is_open.get():
@@ -459,6 +528,8 @@ class MemoryDatabaseUI:
                 content_container.pack(fill=tk.X, expand=False, padx=10, pady=5)
                 is_open.set(True)
                 toggle_btn.configure(text=f"▼ {title}")
+                if not is_loaded[0]:
+                    populate_text()
 
         # Header Button
         toggle_btn = ttk.Button(
@@ -474,40 +545,53 @@ class MemoryDatabaseUI:
         content_container.pack(fill=tk.X, expand=True, padx=10, pady=5)
 
         # Use a Text widget for performance (instead of hundreds of Frames)
-        # Calculate height: approx 3 lines per item, max 20 lines
-        widget_height = min(len(items) * 3, 20)
-        if widget_height < 3: widget_height = 3
+        # Calculate height based on type
+        if mem_type in ["NARRATIVE", "NOTE", "IDENTITY", "SELF-KNOWLEDGE"]:
+            # These tend to be longer
+            lines_per_item = 15
+            max_lines = 200 # Increased for longer narratives
+        else:
+            lines_per_item = 3
+            max_lines = 25
 
-        text_widget = scrolledtext.ScrolledText(
-            content_container,
-            wrap=tk.WORD,
-            height=widget_height,
-            font=("Segoe UI", 9) if os.name == 'nt' else ("Arial", 9),
-            bg="#2b2b2b",
-            fg="white",
-            borderwidth=0,
-            highlightthickness=0
-        )
-        text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        widget_height = min(len(items) * lines_per_item, max_lines)
+        if widget_height < 5: widget_height = 5
 
-        # Configure tags
-        text_widget.tag_config("header", foreground="#61afef", font=("Segoe UI", 9, "bold"))
-        text_widget.tag_config("content", foreground="#dcdcdc")
-        text_widget.tag_config("separator", foreground="#4e4e4e")
+        def populate_text():
+            text_widget = scrolledtext.ScrolledText(
+                content_container,
+                wrap=tk.WORD,
+                height=widget_height,
+                font=("Segoe UI", 10) if os.name == 'nt' else ("Arial", 10),
+                bg="#2b2b2b",
+                fg="white",
+                borderwidth=0,
+                highlightthickness=0
+            )
+            text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        for _id, subject, text in items:
-            header = f"[ID:{_id}] [{subject}]\n"
-            content = f"{text}\n"
-            sep = "-" * 80 + "\n"
+            # Configure tags
+            text_widget.tag_config("header", foreground="#61afef", font=("Segoe UI", 9, "bold"))
+            text_widget.tag_config("content", foreground="#dcdcdc")
+            text_widget.tag_config("separator", foreground="#4e4e4e")
+
+            for _id, subject, text in container.items:
+                header = f"[ID:{_id}] [{subject}]\n"
+                content = f"{text}\n"
+                sep = "-" * 80 + "\n"
+                
+                # Add unique tag for ID
+                mem_tag = f"mem_{_id}"
+                
+                text_widget.insert(tk.END, header, ("header", mem_tag))
+                text_widget.insert(tk.END, content, ("content", mem_tag))
+                text_widget.insert(tk.END, sep, ("separator", mem_tag))
+
+            text_widget.config(state=tk.DISABLED)
             
-            # Add unique tag for ID
-            mem_tag = f"mem_{_id}"
-            
-            text_widget.insert(tk.END, header, ("header", mem_tag))
-            text_widget.insert(tk.END, content, ("content", mem_tag))
-            text_widget.insert(tk.END, sep, ("separator", mem_tag))
+            # Bind right-click
+            text_widget.bind("<Button-3>", lambda e: self.on_memory_right_click(e, text_widget))
+            is_loaded[0] = True
 
-        text_widget.config(state=tk.DISABLED)
-        
-        # Bind right-click
-        text_widget.bind("<Button-3>", lambda e: self.on_memory_right_click(e, text_widget))
+        # Initial population
+        populate_text()

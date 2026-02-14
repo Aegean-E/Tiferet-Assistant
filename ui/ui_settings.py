@@ -1,10 +1,10 @@
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, filedialog
 import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
 import json
 import os
-from lm import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT
+import logging
+from ai_core.lm import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT
 from treeoflife.chokmah import DAYDREAM_EXTRACTOR_PROMPT as DEFAULT_DAYDREAM_EXTRACTOR_PROMPT
 
 class SettingsUI:
@@ -217,6 +217,16 @@ class SettingsUI:
         ])
         theme_combo.grid(row=0, column=1, padx=5, pady=5)
 
+        # Plugins tab
+        plugins_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(plugins_frame, text=" Plugins")
+        self.setup_plugins_tab(plugins_frame)
+
+        # Permissions tab
+        perms_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(perms_frame, text=" Permissions")
+        self.setup_permissions_tab(perms_frame)
+
     def load_settings_into_ui(self):
         """Load settings into UI fields"""
         self.bot_token_var.set(self.settings.get("bot_token", ""))
@@ -255,6 +265,67 @@ class SettingsUI:
                               "PREFERENCE": 0.93, "RULE": 0.93}
         for t, var in self.threshold_vars.items():
             var.set(thresholds.get(t, default_thresholds.get(t, 0.9)))
+
+        # Load permissions
+        perms = self.settings.get("permissions", {})
+        for tool, var in self.permission_vars.items():
+            var.set(perms.get(tool, True))
+
+    def setup_permissions_tab(self, parent):
+        """Setup tool permissions interface."""
+        perms_box = ttk.LabelFrame(parent, text="Tool Permissions")
+        perms_box.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.permission_vars = {}
+        tools = [
+            "SEARCH", "WIKI", "FIND_PAPER", "CALCULATOR", "CLOCK", 
+            "SYSTEM_INFO", "PHYSICS", "SIMULATE_PHYSICS", "CAUSAL", "SIMULATE_ACTION", 
+            "PREDICT", "READ_CHUNK", "DESCRIBE_IMAGE", "WRITE_FILE"
+        ]
+        
+        # Create a grid of checkboxes
+        for i, tool in enumerate(tools):
+            var = tk.BooleanVar(value=True)
+            self.permission_vars[tool] = var
+            cb = ttk.Checkbutton(perms_box, text=tool, variable=var)
+            row = i // 3
+            col = i % 3
+            cb.grid(row=row, column=col, sticky=tk.W, padx=10, pady=5)
+
+    def setup_plugins_tab(self, parent):
+        """Setup the plugins management interface."""
+        if not hasattr(self, 'ai_core') or not self.ai_core.action_manager:
+            ttk.Label(parent, text="AI Core not initialized.").pack(padx=10, pady=10)
+            return
+
+        plugins = self.ai_core.action_manager.get_plugins()
+        
+        if not plugins:
+            ttk.Label(parent, text="No plugins loaded.").pack(padx=10, pady=10)
+            return
+
+        # Scrollable frame for plugins
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        for name, info in plugins.items():
+            frame = ttk.LabelFrame(scrollable_frame, text=name)
+            frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            var = tk.BooleanVar(value=info['enabled'])
+            cb = ttk.Checkbutton(frame, text="Enabled", variable=var, 
+                                 command=lambda n=name, v=var: self.ai_core.action_manager.toggle_plugin(n, v.get()))
+            cb.pack(anchor=tk.W, padx=5, pady=2)
+            
+            ttk.Label(frame, text=info.get('description', 'No description')).pack(anchor=tk.W, padx=5, pady=2)
 
     def load_settings_from_file_dialog(self):
         """Load settings from a selected file via dialog"""
@@ -309,49 +380,62 @@ class SettingsUI:
 
     def save_settings_from_ui(self):
         """Save settings from UI fields"""
-        self.settings["bot_token"] = self.bot_token_var.get()
-        self.settings["chat_id"] = self.chat_id_var.get()
-        self.settings["theme"] = self.theme_var.get().lower()  # Convert to lowercase for ttkbootstrap
-        self.settings["telegram_bridge_enabled"] = self.telegram_bridge_enabled.get()
-        self.settings["base_url"] = self.base_url_var.get()
-        self.settings["chat_model"] = self.chat_model_var.get()
-        self.settings["embedding_model"] = self.embedding_model_var.get()
-        self.settings["temperature"] = self.temperature_var.get()
-        self.settings["top_p"] = self.top_p_var.get()
-        self.settings["max_tokens"] = self.max_tokens_var.get()
-        self.settings["temperature_step"] = self.temperature_step_var.get()
-        self.settings["system_prompt"] = self.system_prompt_text.get(1.0, tk.END).strip()
-        self.settings["memory_extractor_prompt"] = self.memory_extractor_prompt_text.get(1.0, tk.END).strip()
-        self.settings["daydream_extractor_prompt"] = self.daydream_extractor_prompt_text.get(1.0, tk.END).strip()
-        self.settings["ai_mode"] = self.ai_mode_var.get()
+        try:
+            self.settings["bot_token"] = self.bot_token_var.get()
+            self.settings["chat_id"] = self.chat_id_var.get()
+            self.settings["theme"] = self.theme_var.get().lower()  # Convert to lowercase for ttkbootstrap
+            self.settings["telegram_bridge_enabled"] = self.telegram_bridge_enabled.get()
+            self.settings["base_url"] = self.base_url_var.get()
+            self.settings["chat_model"] = self.chat_model_var.get()
+            self.settings["embedding_model"] = self.embedding_model_var.get()
+            self.settings["temperature"] = self.temperature_var.get()
+            self.settings["top_p"] = self.top_p_var.get()
+            self.settings["max_tokens"] = self.max_tokens_var.get()
+            self.settings["temperature_step"] = self.temperature_step_var.get()
+            self.settings["system_prompt"] = self.system_prompt_text.get(1.0, tk.END).strip()
+            self.settings["memory_extractor_prompt"] = self.memory_extractor_prompt_text.get(1.0, tk.END).strip()
+            self.settings["daydream_extractor_prompt"] = self.daydream_extractor_prompt_text.get(1.0, tk.END).strip()
+            self.settings["ai_mode"] = self.ai_mode_var.get()
 
-        # Memory settings
-        self.settings["daydream_cycle_limit"] = self.daydream_cycle_limit_var.get()
-        self.settings["max_inconclusive_attempts"] = self.max_inconclusive_attempts_var.get()
-        self.settings["max_retrieval_failures"] = self.max_retrieval_failures_var.get()
-        self.settings["concurrency"] = self.concurrency_var.get()
+            # Memory settings
+            self.settings["daydream_cycle_limit"] = self.daydream_cycle_limit_var.get()
+            self.settings["max_inconclusive_attempts"] = self.max_inconclusive_attempts_var.get()
+            self.settings["max_retrieval_failures"] = self.max_retrieval_failures_var.get()
+            self.settings["concurrency"] = self.concurrency_var.get()
 
-        thresholds = {t: var.get() for t, var in self.threshold_vars.items()}
-        self.settings["consolidation_thresholds"] = thresholds
+            thresholds = {t: var.get() for t, var in self.threshold_vars.items()}
+            self.settings["consolidation_thresholds"] = thresholds
 
-        self.save_settings()
+            # Permissions
+            permissions = {t: var.get() for t, var in self.permission_vars.items()}
+            self.settings["permissions"] = permissions
 
-        # Apply new theme (convert capitalized name to lowercase)
-        theme_map = {
-            "Cosmo": "cosmo",
-            "Cyborg": "cyborg",
-            "Darkly": "darkly"
-        }
-        theme_to_apply = theme_map.get(self.settings["theme"].capitalize(), self.settings["theme"])
-        self.style.theme_use(theme_to_apply)
+            self.save_settings()
 
-        # Only attempt connection if bridge is enabled and both credentials are provided
-        if (self.settings["telegram_bridge_enabled"] and
-                self.settings["bot_token"] and
-                self.settings["chat_id"]):
-            self.connect()
-        elif not self.settings["telegram_bridge_enabled"]:
-            # If bridge is disabled, make sure we're disconnected
-            self.disconnect()
+            # Apply new theme (convert capitalized name to lowercase)
+            theme_map = {
+                "Cosmo": "cosmo",
+                "Cyborg": "cyborg",
+                "Darkly": "darkly"
+            }
+            theme_to_apply = theme_map.get(self.settings["theme"].capitalize(), self.settings["theme"])
+            self.style.theme_use(theme_to_apply)
 
-        messagebox.showinfo("Settings", "Settings saved successfully!")
+            # Update text widget colors
+            if hasattr(self, 'apply_theme_colors'):
+                self.apply_theme_colors()
+
+            # Only attempt connection if bridge is enabled and both credentials are provided
+            if (self.settings["telegram_bridge_enabled"] and
+                    self.settings["bot_token"] and
+                    self.settings["chat_id"]):
+                self.connect()
+            elif not self.settings["telegram_bridge_enabled"]:
+                # If bridge is disabled, make sure we're disconnected
+                self.disconnect()
+
+            messagebox.showinfo("Settings", "Settings saved successfully!")
+        except tk.TclError as e:
+            messagebox.showerror("Validation Error", f"Invalid input in settings: {e}\nPlease check numeric fields.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save settings: {e}")
