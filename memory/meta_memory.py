@@ -333,6 +333,26 @@ class MetaMemoryStore:
         with self._connect() as con:
             row = con.execute("SELECT MAX(id) FROM meta_memories").fetchone()
             return row[0] if row and row[0] else 0
+
+    def get(self, event_id: int) -> Optional[Dict]:
+        """Retrieve a specific meta-memory by ID."""
+        with self._connect() as con:
+            row = con.execute("""
+                              SELECT id, event_type, subject, text, created_at
+                              FROM meta_memories
+                              WHERE id = ?
+                              """, (event_id,)).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "type": row[1],
+            "subject": row[2],
+            "text": row[3],
+            "created_at": row[4]
+        }
             
     def count_all(self) -> int:
         """Count all meta-memories."""
