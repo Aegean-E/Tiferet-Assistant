@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import time
+import re
 import json
 import threading
 import random
@@ -35,6 +36,11 @@ class MemoryStore:
         self.self_model = None # Injected later
         self.unsaved_faiss_changes = 0
         self.faiss_save_threshold = int(config.get("faiss_save_threshold", 50)) if config else 50
+        
+        self.faiss_index_type = config.get("faiss_index_type", "IndexFlatIP") if config else "IndexFlatIP"
+        self.faiss_nlist = int(config.get("faiss_nlist", 100)) if config else 100
+        self.faiss_nprobe = int(config.get("faiss_nprobe", 10)) if config else 10
+        self.new_mems_since_train = 0
         
         self.faiss_index = None
         if FAISS_AVAILABLE:
@@ -265,11 +271,13 @@ class MemoryStore:
         Build FAISS index from active memories in DB.
         This runs on startup to cache embeddings.
         """
-        try:
+        if not FAISS_AVAILABLE: return
+        with self.faiss_lock:
+            try:
             # Fetch all active memories with embeddings
             # Use cursor to fetch in batches to avoid OOM
-            with self._connect() as con:
-                cur = con.execute("""
+                with self._connect() as con:
+                    cur = con.execute("""
                     SELECT id, embedding FROM memories 
                     WHERE parent_id IS NULL 
                     AND deleted = 0
@@ -299,26 +307,34 @@ class MemoryStore:
                             except:
                                 continue
                     
-                    if embeddings:
-                        if self.faiss_index is None:
-                            dimension = len(embeddings[0])
-                            quantizer = faiss.IndexFlatIP(dimension)
-                            self.faiss_index = faiss.IndexIDMap(quantizer)
-                        
-                        # Check dimension consistency
-                        if len(embeddings[0]) == self.faiss_index.d:
-                            embeddings_matrix = np.array(embeddings)
-                            faiss.normalize_L2(embeddings_matrix)
-                            self.faiss_index.add_with_ids(embeddings_matrix, np.array(ids).astype('int64'))
-                            total_loaded += len(ids)
+                    if not embeddings:
+                        self.faiss_index = None
+                        return
+
+                    dimension = len(embeddings[0])
+                    embs_np = np.array(embeddings).astype('float32')
+                    faiss.normalize_L2(embs_np)
+                    ids_np = np.array(ids).astype('int64')
+
+                    if self.faiss_index_type == "IndexIVFFlat" and total_loaded >= self.faiss_nlist:
+                        quantizer = faiss.IndexFlatIP(dimension)
+                        ivf_index = faiss.IndexIVFFlat(quantizer, dimension, self.faiss_nlist, faiss.METRIC_INNER_PRODUCT)
+                        self.faiss_index = faiss.IndexIDMap(ivf_index)
+                        self.faiss_index.train(embs_np)
+                    else:
+                        quantizer = faiss.IndexFlatIP(dimension)
+                        self.faiss_index = faiss.IndexIDMap(quantizer)
+                    
+                    self.faiss_index.add_with_ids(embs_np, ids_np)
+                    self.new_mems_since_train = 0
 
                 if total_loaded > 0:
                     logging.info(f"🧠 [Memory] FAISS index built with {total_loaded} active memories.")
                     self._save_faiss_index(force=True)
                     
-        except Exception as e:
-            logging.error(f"⚠️ Failed to build FAISS index for memory: {e}")
-            self.faiss_index = None
+            except Exception as e:
+                logging.error(f"⚠️ Failed to build FAISS index for memory: {e}")
+                self.faiss_index = None
 
     def reindex_embeddings(self, embed_fn):
         """Re-compute all embeddings using new model."""
@@ -357,6 +373,8 @@ class MemoryStore:
         - Other types: Uses full normalized text to allow multiple distinct items.
         """
         text_lower = " ".join(text.lower().strip().split())
+        # Remove punctuation for identity hashing to prevent near-identical collisions
+        text_lower = re.sub(r'[^\w\s]', '', text_lower)
 
         # Normalize pronouns for identity consistency
         # This ensures "Your name is X" and "Assistant name is X" map to the same identity slot
@@ -545,16 +563,26 @@ class MemoryStore:
 
             # Update FAISS if available (Outside DB context but inside write_lock)
             if FAISS_AVAILABLE and embedding is not None:
-                with self.faiss_lock:
-                    if self.faiss_index is None:
-                        dimension = len(embedding)
-                        quantizer = faiss.IndexFlatIP(dimension)
-                        self.faiss_index = faiss.IndexIDMap(quantizer)
+                try:
+                    with self.faiss_lock:
+                        if self.faiss_index is None:
+                            dimension = len(embedding)
+                            quantizer = faiss.IndexFlatIP(dimension)
+                            self.faiss_index = faiss.IndexIDMap(quantizer)
 
-                    emb_np = embedding.reshape(1, -1).astype('float32')
-                    faiss.normalize_L2(emb_np)
-                    self.faiss_index.add_with_ids(emb_np, np.array([row_id]).astype('int64'))
-                    self._save_faiss_index()
+                        emb_np = embedding.reshape(1, -1).astype('float32')
+                        faiss.normalize_L2(emb_np)
+                    
+                    self.new_mems_since_train += 1
+                    if self.faiss_index_type == "IndexIVFFlat" and self.new_mems_since_train >= 500:
+                        # Trigger full rebuild to re-train centroids
+                        self._build_faiss_index()
+                    else:
+                        self.faiss_index.add_with_ids(emb_np, np.array([row_id]).astype('int64'))
+                        self._save_faiss_index()
+                except Exception as e:
+                    logging.error(f"❌ MemoryStore: FAISS update failed for ID {row_id}. Index may be out of sync: {e}")
+                    # Note: The DB record exists. _sync_faiss_index will repair this on next reboot.
 
             return row_id
 
@@ -657,6 +685,37 @@ class MemoryStore:
                 rows = con.execute(query).fetchall()
         return rows
 
+    def get_recent_filtered(self, limit: int = 20, exclude_sources: List[str] = None) -> List[Tuple]:
+        """
+        Get recent memories with specific source filtering.
+        Used to separate chat context from autonomous daydreaming.
+        """
+        with self._connect() as con:
+            query = """
+                SELECT m.id, m.type, m.subject, m.text, m.source, m.verified, m.flags, m.confidence, m.progress
+                FROM memories m
+                WHERE m.parent_id IS NULL
+                AND m.deleted = 0
+            """
+            params = []
+            if exclude_sources:
+                placeholders = ','.join(['?'] * len(exclude_sources))
+                query += f" AND m.source NOT IN ({placeholders})"
+                params.extend(exclude_sources)
+            
+            query += """
+                AND NOT EXISTS (
+                    SELECT 1 FROM memories newer
+                    WHERE (newer.identity = m.identity OR newer.parent_id = m.id)
+                    AND newer.created_at > m.created_at
+                )
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """
+            params.append(limit)
+            rows = con.execute(query, params).fetchall()
+        return rows
+
     def get_active_by_type(self, mem_type: str) -> List[Tuple[int, str, str, str, float, float]]:
         """Get all active memories of a specific type (id, subject, text, source, confidence, progress)."""
         with self._connect() as con:
@@ -703,9 +762,19 @@ class MemoryStore:
                     q_emb = query_embedding.reshape(1, -1).astype('float32')
                     faiss.normalize_L2(q_emb)
                     
+                    # Set nprobe for IVF indexes
+                    if self.faiss_index_type == "IndexIVFFlat":
+                        try:
+                            inner_index = faiss.downcast_index(self.faiss_index.index)
+                            inner_index.nprobe = self.faiss_nprobe
+                        except:
+                            pass
+
                     # Search more candidates than needed to account for filtered/inactive ones
                     search_k = min(limit * 10, self.faiss_index.ntotal)
+                    t_faiss = time.time()
                     scores, indices = self.faiss_index.search(q_emb, search_k)
+                    logging.debug(f"⏱️ [Memory] FAISS search took {time.time()-t_faiss:.3f}s")
                     
                     for i, idx in enumerate(indices[0]):
                         if idx != -1:
@@ -803,31 +872,55 @@ class MemoryStore:
         Returns (indices, distances).
         Used for clustering and density analysis.
         """
-        if not FAISS_AVAILABLE:
-            return [], []
-        
-        with self.faiss_lock:
-            if not self.faiss_index:
-                return [], []
-            
-            try:
-                q_emb = query_embedding.reshape(1, -1).astype('float32')
-                faiss.normalize_L2(q_emb)
-                
-                lims, D, I = self.faiss_index.range_search(q_emb, threshold)
+        if FAISS_AVAILABLE:
+            with self.faiss_lock:
+                if self.faiss_index:
+                    try:
+                        q_emb = query_embedding.reshape(1, -1).astype('float32')
+                        faiss.normalize_L2(q_emb)
+                        
+                        lims, D, I = self.faiss_index.range_search(q_emb, threshold)
+                        
+                        mapped_ids = []
+                        distances = []
+                        
+                        for i in range(lims[0], lims[1]):
+                            faiss_idx = int(I[i])
+                            mapped_ids.append(faiss_idx)
+                            distances.append(float(D[i]))
+                                
+                        return mapped_ids, distances
+                    except Exception as e:
+                        logging.error(f"⚠️ FAISS range search failed: {e}")
+
+        # 2. Fallback: Linear Scan (Numpy)
+        try:
+            with self._connect() as con:
+                cursor = con.execute("""
+                    SELECT id, embedding FROM memories 
+                    WHERE parent_id IS NULL AND deleted = 0 AND embedding IS NOT NULL
+                """)
                 
                 mapped_ids = []
                 distances = []
+                q_norm = np.linalg.norm(query_embedding)
                 
-                for i in range(lims[0], lims[1]):
-                    faiss_idx = int(I[i])
-                    mapped_ids.append(faiss_idx)
-                    distances.append(float(D[i]))
-                        
+                while True:
+                    rows = cursor.fetchmany(1000)
+                    if not rows: break
+                    for r in rows:
+                        mem_emb = np.array(json.loads(r[1]))
+                        if query_embedding.shape != mem_emb.shape: continue
+                        m_norm = np.linalg.norm(mem_emb)
+                        if m_norm > 0 and q_norm > 0:
+                            sim = np.dot(query_embedding, mem_emb) / (q_norm * m_norm)
+                            if sim >= threshold:
+                                mapped_ids.append(r[0])
+                                distances.append(float(sim))
                 return mapped_ids, distances
-            except Exception as e:
-                logging.error(f"⚠️ FAISS range search failed: {e}")
-                return [], []
+        except Exception as e:
+            logging.error(f"⚠️ Linear range search fallback failed: {e}")
+            return [], []
 
     def get_memory_history(self, identity: str) -> List[Dict]:
         """
@@ -862,29 +955,6 @@ class MemoryStore:
                 'created_at': r[6],
             })
         return versions
-
-    def find_conflicts_exact(self, text: str) -> List[Dict]:
-        """
-        Very conservative conflict detection.
-        Only checks explicit negation overlap.
-        """
-        lowered = text.lower()
-        negated = any(w in lowered for w in (" not ", " never ", " no "))
-        if not negated:
-            return []
-
-        with self._connect() as con:
-            rows = con.execute("SELECT id, type, text FROM memories").fetchall()
-
-        conflicts = []
-        for r in rows:
-            if r[2].lower() in lowered or lowered in r[2].lower():
-                conflicts.append({
-                    "id": r[0],
-                    "type": r[1],
-                    "text": r[2],
-                })
-        return conflicts
 
     # --------------------------
     # Associative Memory (Graph)
@@ -941,11 +1011,11 @@ class MemoryStore:
         """
         with self._connect() as con:
             # Get IDs first for FAISS removal
-            rows = con.execute("SELECT id FROM memories WHERE type = ?", (mem_type.upper(),)).fetchall()
+            rows = con.execute("SELECT id FROM memories WHERE type = ? AND deleted = 0", (mem_type.upper(),)).fetchall()
             ids = [r[0] for r in rows]
             
             cur = con.execute(
-                "DELETE FROM memories WHERE type = ?",
+                "UPDATE memories SET deleted = 1 WHERE type = ?",
                 (mem_type.upper(),)
             )
             con.commit()
@@ -1268,46 +1338,33 @@ class MemoryStore:
 
     def search_refuted(self, query_embedding: np.ndarray, limit: int = 3) -> List[Tuple]:
         """Specific search for REFUTED_BELIEF memories."""
-        # Fetch all refuted embeddings
-        with self._connect() as con:
-            rows = con.execute("SELECT id, subject, text, source, embedding FROM memories WHERE type='REFUTED_BELIEF' AND deleted=0 AND embedding IS NOT NULL").fetchall()
-        
-        if not rows: return []
-        
-        embeddings = []
-        data = []
-        for r in rows:
-            try:
-                emb = np.array(json.loads(r[4]), dtype='float32')
-                embeddings.append(emb)
-                data.append(r)
-            except: continue
-            
-        if not embeddings: return []
-        
-        # Numpy cosine similarity
-        matrix = np.array(embeddings)
-        # Normalize
-        norm = np.linalg.norm(matrix, axis=1, keepdims=True)
-        matrix = matrix / (norm + 1e-10)
-        
-        q_emb = query_embedding.reshape(1, -1).astype('float32')
-        q_norm = np.linalg.norm(q_emb)
-        q_emb = q_emb / (q_norm + 1e-10)
-        
-        sims = np.dot(matrix, q_emb.T).flatten()
-        
-        # Top K
-        top_indices = np.argsort(sims)[-limit:][::-1]
-        
+        # Process in batches to avoid OOM on large refuted sets
         results = []
-        for idx in top_indices:
-            if sims[idx] > 0.0: # Filter non-matches
-                r = data[idx]
-                # (id, subject, text, source, similarity)
-                results.append((r[0], r[1], r[2], r[3], float(sims[idx])))
+        q_norm = np.linalg.norm(query_embedding)
+        
+        with self._connect() as con:
+            cursor = con.execute("""
+                SELECT id, subject, text, source, embedding 
+                FROM memories 
+                WHERE type='REFUTED_BELIEF' AND deleted=0 AND embedding IS NOT NULL
+            """)
+            
+            while True:
+                rows = cursor.fetchmany(1000)
+                if not rows: break
                 
-        return results
+                for r in rows:
+                    try:
+                        mem_emb = np.array(json.loads(r[4]))
+                        m_norm = np.linalg.norm(mem_emb)
+                        if m_norm > 0 and q_norm > 0:
+                            sim = np.dot(query_embedding, mem_emb) / (q_norm * m_norm)
+                            if sim > 0.1:
+                                results.append((r[0], r[1], r[2], r[3], float(sim)))
+                    except: continue
+        
+        results.sort(key=lambda x: x[4], reverse=True)
+        return results[:limit]
 
     # --------------------------
     # Reminders (Temporal Awareness)

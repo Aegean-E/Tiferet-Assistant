@@ -1,4 +1,5 @@
-from typing import Optional, Callable, Any, Dict
+from typing import Optional, Callable, Any, Dict, List
+import numpy as np
 import logging
 
 from .memory import MemoryStore
@@ -91,7 +92,9 @@ class MemoryArbiter:
         confidence: float,
         subject: str = "User",
         source: str = "reasoning",
-        affect: float = 0.5
+        affect: float = 0.5,
+        embedding: Optional[np.ndarray] = None,
+        identity: Optional[str] = None
     ) -> Optional[int]:
         """
         Decide whether to promote reasoning into memory.
@@ -120,7 +123,8 @@ class MemoryArbiter:
         self.log(f"✅ [Arbiter] Passed confidence gate: {confidence} >= {min_conf}")
 
         # 2️⃣ Identity + version chaining
-        identity = self.memory_store.compute_identity(text, mem_type=mem_type)
+        if identity is None:
+            identity = self.memory_store.compute_identity(text, mem_type=mem_type)
         previous_versions = self.memory_store.get_by_identity(identity)
         parent_id = previous_versions[-1]["id"] if previous_versions else None
 
@@ -135,8 +139,7 @@ class MemoryArbiter:
 
         # 2.7️⃣ Negative Knowledge Enforcement (Invariant 7)
         # Generate embedding early for checks
-        embedding = None
-        if self.embed_fn:
+        if embedding is None and self.embed_fn:
             embedding = self.embed_fn(text)
 
         if mem_type not in ("REFUTED_BELIEF", "NOTE"):
@@ -279,6 +282,51 @@ class MemoryArbiter:
             self.log(f"      🧠 Meta-memory: {meta_text}")
 
         return memory_id
+
+    def consider_batch(self, candidates: List[Dict]) -> List[int]:
+        """
+        Process a batch of memory candidates through the arbiter.
+        Returns a list of IDs for successfully promoted memories.
+        """
+        promoted_ids = []
+        if not candidates:
+            return promoted_ids
+
+        # Pre-process candidates to get embeddings and identities
+        processed_candidates = []
+        for c in candidates:
+            mem_type = c.get("type", "FACT").upper()
+            text = c.get("text", "")
+            subject = c.get("subject", "User")
+            confidence = c.get("confidence", 0.85)
+            source = c.get("source", "reasoning")
+            affect = c.get("affect", 0.5)
+
+            if mem_type not in self.type_precedence:
+                self.log(f"❌ [Arbiter] Type '{mem_type}' not in precedence table for batch candidate.")
+                continue
+
+            # Generate embedding and identity once
+            embedding = self.embed_fn(text) if self.embed_fn else None
+            identity = self.memory_store.compute_identity(text, mem_type)
+
+            processed_candidates.append({
+                "mem_type": mem_type, "text": text, "subject": subject,
+                "confidence": confidence, "source": source, "affect": affect,
+                "embedding": embedding, "identity": identity
+            })
+
+        # Now iterate and call single consider for each (can be optimized further with batch DB ops)
+        for pc in processed_candidates:
+            mid = self.consider(
+                text=pc["text"], mem_type=pc["mem_type"], confidence=pc["confidence"],
+                subject=pc["subject"], source=pc["source"], affect=pc["affect"],
+                embedding=pc["embedding"], identity=pc["identity"]
+            )
+            if mid is not None:
+                promoted_ids.append(mid)
+
+        return promoted_ids
 
     @staticmethod
     def _extract_value(text: str) -> str:

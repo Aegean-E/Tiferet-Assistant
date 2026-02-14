@@ -176,6 +176,11 @@ class ReasoningStore:
                 # Update FAISS
                 if FAISS_AVAILABLE and self.faiss_index is not None:
                     emb_np = emb.reshape(1, -1).astype('float32')
+                    # Check dimension consistency to prevent AssertionError
+                    if emb_np.shape[1] != self.faiss_index.d:
+                        self.log(f"⚠️ FAISS dimension mismatch ({emb_np.shape[1]} vs {self.faiss_index.d}). Rebuilding index.")
+                        self._build_faiss_index()
+                        return int(row_id)
                     faiss.normalize_L2(emb_np)
                     self.faiss_index.add(emb_np)
                     self.reasoning_id_mapping.append(row_id)
@@ -183,6 +188,55 @@ class ReasoningStore:
                      self._build_faiss_index()
 
                 return int(row_id)
+
+    def add_batch(self, entries: List[Dict]) -> List[int]:
+        """
+        Add multiple reasoning nodes in a batch.
+        """
+        if not entries: return []
+
+        now = int(time.time())
+        values_to_insert = []
+        embeddings_to_add = []
+        ids_to_add = []
+        
+        for entry in entries:
+            content = entry.get("content", "")
+            source = entry.get("source", "inference")
+            confidence = entry.get("confidence", 1.0)
+            ttl_seconds = entry.get("ttl_seconds", 86400)
+            metadata = entry.get("metadata")
+
+            expires_at = now + ttl_seconds if ttl_seconds else None
+            metadata_json = json.dumps(metadata) if metadata else None
+
+            emb = self.embed_fn(content)
+            emb_json = json.dumps(emb.astype(float).tolist())
+            
+            values_to_insert.append((content, emb_json, source, confidence, now, expires_at, metadata_json))
+            embeddings_to_add.append(emb)
+
+        with self.write_lock:
+            with self._connect() as con:
+                ids_to_add = []
+                for val in values_to_insert:
+                    cur = con.execute(
+                        """INSERT INTO reasoning_nodes (content, embedding, source, confidence, created_at, expires_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        val
+                    )
+                    ids_to_add.append(cur.lastrowid)
+                con.commit()
+
+            # Update FAISS
+            if FAISS_AVAILABLE and self.faiss_index is not None and embeddings_to_add:
+                emb_np = np.array(embeddings_to_add).astype('float32')
+                faiss.normalize_L2(emb_np)
+                self.faiss_index.add(emb_np)
+                self.reasoning_id_mapping.extend(ids_to_add)
+            elif FAISS_AVAILABLE and self.faiss_index is None and embeddings_to_add:
+                self._build_faiss_index() # Rebuild if index was empty
+
+        return ids_to_add
 
     def count(self) -> int:
         """Get total number of reasoning nodes."""
