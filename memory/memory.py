@@ -488,7 +488,7 @@ class MemoryStore:
         """Retrieve a specific memory by ID."""
         with self._connect() as con:
             row = con.execute("""
-                SELECT id, identity, parent_id, type, subject, text, confidence, source, created_at, verified, flags, verification_attempts
+                SELECT id, identity, parent_id, type, subject, text, confidence, source, created_at, verified, flags, verification_attempts, epistemic_origin, progress, completed
                 FROM memories
                 WHERE id = ?
             """, (memory_id,)).fetchone()
@@ -500,7 +500,8 @@ class MemoryStore:
             "id": row[0], "identity": row[1], "parent_id": row[2],
             "type": row[3], "subject": row[4], "text": row[5],
             "confidence": row[6], "source": row[7], "created_at": row[8],
-            "verified": row[9], "flags": row[10], "verification_attempts": row[11]
+            "verified": row[9], "flags": row[10], "verification_attempts": row[11],
+            "epistemic_origin": row[12], "progress": row[13], "completed": row[14]
         }
 
     def get_shadow_memories(self, limit: int = 3) -> List[Dict]:
@@ -711,7 +712,7 @@ class MemoryStore:
     def list_recent(self, limit: Optional[int] = 30, offset: int = 0) -> List[Tuple[int, str, str, str, str, int]]:
         """
         Get recent memories, excluding old superseded versions.
-        Returns: (id, type, subject, text, source, verified, flags, confidence)
+        Returns: (id, type, subject, text, source, verified, flags, confidence, progress, created_at)
         A memory is hidden if:
         1. It has a parent_id set (meaning it was superseded/consolidated).
         2. There's a newer memory with the EXACT same identity.
@@ -719,7 +720,7 @@ class MemoryStore:
         """
         with self._connect() as con:
             query = """
-                SELECT m.id, m.type, m.subject, m.text, m.source, m.verified, m.flags, m.confidence, m.progress
+                SELECT m.id, m.type, m.subject, m.text, m.source, m.verified, m.flags, m.confidence, m.progress, m.created_at
                 FROM memories m
                 WHERE m.parent_id IS NULL
                 AND m.deleted = 0
@@ -740,6 +741,25 @@ class MemoryStore:
                 rows = con.execute(query, (limit, offset)).fetchall()
             else:
                 rows = con.execute(query).fetchall()
+        return rows
+
+    def search_text(self, query: str, limit: int = 50) -> List[Tuple]:
+        """
+        Perform a simple text search on active memories.
+        Returns: (id, type, subject, text, source, verified, flags, confidence, progress, created_at)
+        """
+        with self._connect() as con:
+            q = f"%{query}%"
+            # Same columns as list_recent for UI compatibility
+            rows = con.execute("""
+                SELECT m.id, m.type, m.subject, m.text, m.source, m.verified, m.flags, m.confidence, m.progress, m.created_at
+                FROM memories m
+                WHERE (m.text LIKE ? OR m.subject LIKE ? OR m.type LIKE ?)
+                AND m.parent_id IS NULL
+                AND m.deleted = 0
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """, (q, q, q, limit)).fetchall()
         return rows
 
     def get_recent_filtered(self, limit: int = 20, exclude_sources: List[str] = None) -> List[Tuple]:

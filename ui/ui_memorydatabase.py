@@ -25,15 +25,23 @@ class MemoryDatabaseUI:
                                     bootstyle="secondary")
         refresh_button.place(relx=1.0, x=-5, y=2, anchor="ne")
         
-        # Export Memories button (Placed to the left of Refresh)
-        export_mem_button = ttk.Button(self.database_frame, text="💾 Export Memories", command=self.export_memories,
-                                   bootstyle="info")
-        export_mem_button.place(relx=1.0, x=-105, y=2, anchor="ne")
+        # Search Bar (Placed to the left of Refresh)
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(self.database_frame, textvariable=self.search_var, width=25)
+        search_entry.place(relx=1.0, x=-105, y=4, anchor="ne")
+        search_entry.bind("<Return>", lambda e: self.refresh_database_view())
 
-        # Export Summaries button (Placed to the left of Export Memories)
-        export_button = ttk.Button(self.database_frame, text="💾 Export Summaries", command=self.export_summaries,
-                                   bootstyle="info")
-        export_button.place(relx=1.0, x=-245, y=2, anchor="ne")
+        ttk.Label(self.database_frame, text="🔍").place(relx=1.0, x=-270, y=8, anchor="ne")
+
+        # Export Memories button
+        export_mem_button = ttk.Button(self.database_frame, text="💾 Memories", command=self.export_memories,
+                                   bootstyle="info-outline")
+        export_mem_button.place(relx=1.0, x=-295, y=2, anchor="ne")
+
+        # Export Summaries button
+        export_button = ttk.Button(self.database_frame, text="💾 Summaries", command=self.export_summaries,
+                                   bootstyle="info-outline")
+        export_button.place(relx=1.0, x=-405, y=2, anchor="ne")
 
         # Stats Label (Verified / Total)
         # Moved to notebook header (tab bar) via place() and event binding
@@ -140,15 +148,17 @@ class MemoryDatabaseUI:
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        columns = ("ID", "Type", "Subject", "Text")
+        columns = ("ID", "Date", "Type", "Subject", "Conf", "Text")
         tree = ttk.Treeview(frame, columns=columns, show="headings", bootstyle="info")
         
         # Track sort direction
         tree.sort_directions = {col: False for col in columns}
 
+        widths = {"ID": 60, "Date": 120, "Type": 100, "Subject": 100, "Conf": 60, "Text": 500}
+
         for col in columns:
             tree.heading(col, text=f"{col} ↕", command=lambda c=col, t=tree: self.sort_memory_column(t, c))
-            tree.column(col, width=100 if col != "Text" else 600)
+            tree.column(col, width=widths.get(col, 100))
 
         scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
@@ -213,13 +223,38 @@ class MemoryDatabaseUI:
         header_frame = ttk.Frame(detail_win, padding=10)
         header_frame.pack(fill=tk.X)
         
-        ttk.Label(header_frame, text=f"ID: {item_id}", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
-        ttk.Label(header_frame, text=f"Type: {mem_data['type']}", bootstyle="info").pack(side=tk.LEFT, padx=10)
-        ttk.Label(header_frame, text=f"Subject: {mem_data['subject']}", bootstyle="success").pack(side=tk.LEFT, padx=10)
+        # Row 1
+        r1 = ttk.Frame(header_frame)
+        r1.pack(fill=tk.X, pady=2)
+        ttk.Label(r1, text=f"ID: {item_id}", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        ttk.Label(r1, text=f"[{mem_data['type']}]", bootstyle="info").pack(side=tk.LEFT, padx=5)
+        ttk.Label(r1, text=f"Subject: {mem_data['subject']}", bootstyle="success").pack(side=tk.LEFT, padx=5)
+
+        # Row 2 (Metadata)
+        r2 = ttk.Frame(header_frame)
+        r2.pack(fill=tk.X, pady=2)
+
+        try:
+            dt = datetime.fromtimestamp(mem_data['created_at']).strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            dt = str(mem_data['created_at'])
+
+        conf = mem_data.get('confidence', 0.0)
+        verified = "✅ Verified" if mem_data.get('verified') else "❓ Unverified"
+        source = mem_data.get('source', 'Unknown')
+        origin = mem_data.get('epistemic_origin', 'INFERENCE')
+
+        meta_text = f"📅 {dt}  |  💎 Conf: {conf:.2f}  |  {verified}  |  Source: {source}  |  Origin: {origin}"
         
+        if mem_data['type'] == 'GOAL':
+             prog = mem_data.get('progress', 0.0) * 100
+             meta_text += f"  |  🎯 Progress: {prog:.1f}%"
+
+        ttk.Label(r2, text=meta_text, font=("Segoe UI", 9), foreground="#cccccc").pack(side=tk.LEFT, padx=5)
+
         # Full Text
         text_frame = ttk.LabelFrame(detail_win, text="Full Memory Text")
-        text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
         text_area = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, font=("Arial", 11))
         text_area.pack(fill=tk.BOTH, expand=True)
@@ -240,12 +275,18 @@ class MemoryDatabaseUI:
 
         def fetch_data():
             try:
-                # Fetch data in background thread
-                mem_items = self.memory_store.list_recent(limit=self.db_page_size, offset=self.db_page * self.db_page_size)
-                stats = self.memory_store.get_memory_stats()
-                
-                # Calculate stats
-                stats_text = f"Total: {stats.get('total_memories', 0)} | Unverified Beliefs: {stats.get('unverified_beliefs', 0)} | Unverified Facts: {stats.get('unverified_facts', 0)} | Goals: {stats.get('active_goals', 0)}"
+                # Check for search query
+                query = self.search_var.get().strip() if hasattr(self, 'search_var') else ""
+
+                if query:
+                     mem_items = self.memory_store.search_text(query, limit=100)
+                     stats_text = f"Search Results: {len(mem_items)} items found for '{query}'"
+                else:
+                    # Fetch data in background thread
+                    mem_items = self.memory_store.list_recent(limit=self.db_page_size, offset=self.db_page * self.db_page_size)
+                    stats = self.memory_store.get_memory_stats()
+                    # Calculate stats
+                    stats_text = f"Total: {stats.get('total_memories', 0)} | Unverified Beliefs: {stats.get('unverified_beliefs', 0)} | Unverified Facts: {stats.get('unverified_facts', 0)} | Goals: {stats.get('active_goals', 0)}"
 
                 # Fetch Summaries
                 summaries = self.meta_memory_store.get_by_event_type("SESSION_SUMMARY", limit=30)
@@ -379,9 +420,26 @@ class MemoryDatabaseUI:
         for item in tree.get_children():
             tree.delete(item)
         for mem in items:
-            # mem is a tuple: (id, type, subject, text, source, ...)
-            display_text = mem[3][:100] + "..." if len(mem[3]) > 100 else mem[3]
-            tree.insert("", "end", values=(mem[0], mem[1], mem[2], display_text))
+            # mem: (id, type, subject, text, source, verified, flags, confidence, progress, created_at)
+            # indices: 0, 1,    2,       3,    4,      5,        6,     7,          8,        9
+
+            _id = mem[0]
+            _type = mem[1]
+            _subject = mem[2]
+            _text = mem[3]
+
+            # Safe access for extended fields
+            conf = mem[7] if len(mem) > 7 else 0.0
+            created_at = mem[9] if len(mem) > 9 else 0
+
+            try:
+                date_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d")
+            except:
+                date_str = ""
+
+            display_text = _text[:100].replace('\n', ' ') + "..." if len(_text) > 100 else _text.replace('\n', ' ')
+
+            tree.insert("", "end", values=(_id, date_str, _type, _subject, f"{conf:.2f}", display_text))
 
     def export_summaries(self):
         """Export session summaries to a text file"""

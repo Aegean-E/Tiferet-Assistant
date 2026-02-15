@@ -8,9 +8,9 @@ from typing import Callable, Dict, List, Optional
 from ai_core.lm import run_local_lm, compute_embedding
 from ai_core.utils import parse_json_array_loose, parse_json_object_loose
 
+import numpy as np
 try:
     import faiss
-    import numpy as np
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
