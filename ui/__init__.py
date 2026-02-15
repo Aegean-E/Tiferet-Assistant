@@ -132,9 +132,53 @@ class DesktopAssistantUI(DocumentsUI, SettingsUI, MemoryDatabaseUI, GraphUI):
                 msg_type, data = self.gui_queue.get_nowait()
                 if msg_type == "log":
                     self._log_to_main_safe(data)
+                elif msg_type == "stream_start":
+                    self._handle_stream_start(data)
+                elif msg_type == "stream_token":
+                    self._handle_stream_token(data)
+                elif msg_type == "stream_end":
+                    self._handle_stream_end(data)
         except queue.Empty:
             pass
-        self.root.after(100, self.start_queue_poller)
+        self.root.after(50, self.start_queue_poller) # Faster polling for smoother stream
+
+    def _handle_stream_start(self, sender):
+        """Initialize a streaming message block."""
+        self.chat_history.config(state=tk.NORMAL)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.chat_history.insert(tk.END, f"[{timestamp}] {sender}:\n", "incoming")
+        self.chat_history.see(tk.END)
+        self.chat_history.config(state=tk.DISABLED)
+
+    def _handle_stream_token(self, token):
+        """Append a token to the current stream."""
+        self.chat_history.config(state=tk.NORMAL)
+        self.chat_history.insert(tk.END, token, "incoming")
+        self.chat_history.see(tk.END)
+        self.chat_history.config(state=tk.DISABLED)
+
+    def _handle_stream_end(self, full_text):
+        """Finalize a streaming message block."""
+        self.chat_history.config(state=tk.NORMAL)
+        self.chat_history.insert(tk.END, "\n\n", "incoming")
+
+        # Add feedback buttons for Assistant
+        # Create a small frame for buttons inside the text widget
+        btn_frame = tk.Frame(self.chat_history, bg="#1e1e1e") # Match bg
+
+        up_btn = tk.Button(btn_frame, text="👍", font=("Segoe UI Emoji", 8), borderwidth=0, bg="#1e1e1e", fg="green", cursor="hand2",
+                           command=lambda m=full_text: self.on_feedback(m, 1.0))
+        up_btn.pack(side=tk.LEFT, padx=2)
+
+        down_btn = tk.Button(btn_frame, text="👎", font=("Segoe UI Emoji", 8), borderwidth=0, bg="#1e1e1e", fg="red", cursor="hand2",
+                             command=lambda m=full_text: self.on_feedback(m, -1.0))
+        down_btn.pack(side=tk.LEFT, padx=2)
+
+        self.chat_history.window_create(tk.END, window=btn_frame)
+        self.chat_history.insert(tk.END, "\n\n")
+
+        self.chat_history.see(tk.END)
+        self.chat_history.config(state=tk.DISABLED)
 
     def apply_theme_colors(self):
         """Apply theme-appropriate colors to non-ttk widgets (ScrolledText)"""

@@ -281,27 +281,33 @@ class AIController:
                 if self.stop_processing_flag:
                     return
 
+                # Start Streaming UI
+                self.app.gui_queue.put(("stream_start", "Assistant"))
+
+                def stream_callback(token):
+                    self.app.gui_queue.put(("stream_token", token))
+
                 # Delegate core logic to Decider
                 reply = self.ai_core.decider.process_chat_message(
                     user_text=user_text,
                     history=history,
                     status_callback=lambda msg: self.app.root.after(0, lambda: self.app.status_var.set(msg)),
                     image_path=image_path,
-                    stop_check_fn=lambda: self.stop_processing_flag # Only stop on global stop, ignore daydream pause
+                    stop_check_fn=lambda: self.stop_processing_flag, # Only stop on global stop, ignore daydream pause
+                    stream_callback=stream_callback
                 )
+
+                # End Streaming UI
+                self.app.gui_queue.put(("stream_end", reply))
 
                 if self.stop_processing_flag:
                     return
 
-                # Execute tools inside the response
-                reply = self.ai_core._process_tool_calls(reply)
+                # Tools are executed within ChatHandler during processing, so we don't need to call _process_tool_calls here.
 
                 # Update History
                 history.append({"role": "assistant", "content": reply})
                 # History is a reference to the list in chat_sessions, so it updates automatically
-
-                # Update UI (Thread-safe)
-                self.app.root.after(0, lambda: self.app.add_chat_message("Assistant", reply, "incoming"))
 
                 # Now that the user has their reply, let the Decider think about what's next.
                 if self.ai_core.decider and hasattr(self.ai_core.decider, 'run_post_chat_decision_cycle'):

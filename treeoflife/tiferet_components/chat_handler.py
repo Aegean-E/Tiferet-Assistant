@@ -15,7 +15,7 @@ class ChatHandler:
     def __init__(self, decider: 'Decider'):
         self.decider = decider
 
-    def process_chat_message(self, user_text: str, history: List[Dict], status_callback: Callable[[str], None] = None, image_path: Optional[str] = None, stop_check_fn: Callable[[], bool] = None) -> str:
+    def process_chat_message(self, user_text: str, history: List[Dict], status_callback: Callable[[str], None] = None, image_path: Optional[str] = None, stop_check_fn: Callable[[], bool] = None, stream_callback: Callable[[str], None] = None) -> str:
         """
         Core Chat Logic: RAG -> LLM -> Memory Extraction -> Response.
         Decider now handles the cognitive pipeline for user interactions.
@@ -56,7 +56,8 @@ class ChatHandler:
                 base_url=settings.get("base_url"),
                 chat_model=settings.get("chat_model"),
                 stop_check_fn=current_stop_check,
-                images=[image_path] if image_path else None
+                images=[image_path] if image_path else None,
+                stream_callback=stream_callback
             )
         except LLMError as e:
             self.decider.log(f"❌ Chat generation failed: {e}")
@@ -100,7 +101,10 @@ class ChatHandler:
                     args = match.group(2).strip()
                     result = self.decider.command_executor._execute_tool(tool_name, args)
                     self.decider._track_metric("tool_success", 1.0 if "Error" not in result else 0.0)
-                    reply += f"\n\n🛠️ Tool Result: {result}"
+                    tool_output = f"\n\n🛠️ Tool Result: {result}"
+                    if stream_callback:
+                        stream_callback(tool_output)
+                    reply += tool_output
             except Exception as e:
                 self.decider.log(f"⚠️ Chat tool execution failed: {e}")
                 self.decider._track_metric("tool_success", 0.0)
