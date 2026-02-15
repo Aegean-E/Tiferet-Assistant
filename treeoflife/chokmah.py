@@ -7,7 +7,7 @@ import numpy as np
 import logging
 
 from concurrent.futures import ThreadPoolExecutor
-from ai_core.lm import run_local_lm, extract_memory_candidates, compute_embedding, _is_low_quality_candidate
+from ai_core.lm import run_local_lm, extract_memories_llm, compute_embedding, _is_low_quality_candidate
 from ai_core.utils import parse_json_array_loose
 from docs.default_prompts import DAYDREAM_EXTRACTOR_PROMPT, DAYDREAM_INSTRUCTION
 
@@ -364,7 +364,7 @@ class Chokmah:
                 if source_filename:
                     instruction += f" If the text is derived from '{source_filename}', append '[Source: {source_filename}]' if not already present. If the text is about a different topic or document, DO NOT append this source."
 
-                candidates = extract_memory_candidates(
+                candidates, _ = extract_memories_llm(
                     user_text="Internal Monologue",
                     assistant_text=thought,
                     base_url=settings.get("base_url"),

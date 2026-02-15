@@ -11,7 +11,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Callable, Dict, Any, Optional, List
-from ai_core.lm import compute_embedding, run_local_lm, extract_memory_candidates, count_tokens, LLMError, DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT
+from ai_core.lm import compute_embedding, run_local_lm, extract_memories_llm, count_tokens, LLMError, DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT
 from ai_core.utils import parse_json_array_loose
 
 try:
@@ -2982,7 +2982,7 @@ class Decider:
             # This prevents the hardcoded instruction in lm.py from overriding the detailed settings prompt
             custom_instr = "Analyze the conversation. Extract all durable memories (Identity, Facts, Goals, etc.) based on the System Rules. Return JSON."
             
-            candidates = extract_memory_candidates(
+            candidates, _ = extract_memories_llm(
                 user_text=user_text,
                 assistant_text=assistant_text,
                 base_url=settings.get("base_url"),
