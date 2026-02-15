@@ -307,7 +307,8 @@ class DecisionMaker:
             if recent_reasoning:
                 context += "Recent Thoughts:\n" + "\n".join([f"- {r.get('content', str(r))[:80]}..." if isinstance(r, dict) else f"- {str(r)[:80]}..." for r in recent_reasoning]) + "\n"
             if recent_docs:
-                context += "Available Documents:\n" + "\n".join([f"- {d[1]}" for d in recent_docs]) + "\n"
+                context += "Available Documents (Partial List):\n" + "\n".join([f"- {d[1]} (ID: {d[0]}, Chunks: {d[4]})" for d in recent_docs]) + "\n"
+                context += "(Use [LIST_DOCS] to see the full library)\n"
 
             current_task = self.decider.heartbeat.current_task if self.decider.heartbeat else "unknown"
             context += f"Current Task: {current_task}\n"
@@ -390,8 +391,8 @@ class DecisionMaker:
 
                 options_text += "\n--- TOOLS & EXTERNAL ---\n"
                 if is_allowed("search_internet"): options_text += "15. [SEARCH_INTERNET: <QUERY>, <SOURCE>]: Request external data. Source: WEB, WIKIPEDIA, PUBMED, or ARXIV. E.g., [SEARCH_INTERNET: Quantum Computing, WEB].\n"
-                if is_allowed("list_docs"): options_text += "16. [LIST_DOCS]: List available documents to choose a topic for daydreaming.\n"
-                if is_allowed("read_doc"): options_text += "17. [READ_DOC: <FILENAME_OR_ID>]: Read the content of a specific document found via LIST_DOCS.\n"
+                if is_allowed("list_docs"): options_text += "16. [LIST_DOCS]: List available documents in the library.\n"
+                if is_allowed("read_doc"): options_text += "17. [READ_DOC: <FILENAME_OR_ID>, <START_CHUNK>]: Read a document. Optional start chunk (default 0). E.g. [READ_DOC: paper.pdf, 5]\n"
                 if is_allowed("execute_tool"): options_text += "18. [EXECUTE: <TOOL_NAME>, <ARGS>]: Execute a system tool. Available: [CALCULATOR, CLOCK, DICE, SYSTEM_INFO].\n"
                 if is_allowed("physics"): options_text += "19. [EXECUTE: PHYSICS, '<SCENARIO>']: Perform a reality check or Fermi estimation on a physical/biochemical scenario.\n"
                 if is_allowed("causal"): options_text += "20. [EXECUTE: CAUSAL, '<TREATMENT>, <OUTCOME>, <CONTEXT>']: Perform Bayesian Causal Inference (DoWhy).\n"
