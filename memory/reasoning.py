@@ -390,11 +390,11 @@ class ReasoningStore:
                 self.log(f"⚠️ FAISS search failed for reasoning: {e}")
 
         # 2. Slow Path: Linear Scan (Numpy)
-        results = []
+        candidate_scores = [] # (id, final_score, raw_sim)
         with self._connect() as con:
             rows = con.execute(
                 """
-                SELECT id, content, embedding, source, confidence, metadata, created_at
+                SELECT id, embedding, confidence, created_at
                 FROM reasoning_nodes
                 WHERE expires_at IS NULL OR expires_at > ?
                 """,
@@ -403,7 +403,9 @@ class ReasoningStore:
 
         q_norm = np.linalg.norm(q_emb)
         for r in rows:
-            emb = np.array(json.loads(r[2]), dtype=float)
+            # Handle potential null embeddings although schema says NOT NULL
+            if not r[1]: continue
+            emb = np.array(json.loads(r[1]), dtype=float)
             # Check dimensions to prevent shape mismatch errors
             if q_emb.shape != emb.shape:
                 continue
@@ -413,8 +415,8 @@ class ReasoningStore:
             if norm > 0 and q_norm > 0:
                 sim = float(dot / (q_norm * norm))
                 
-                conf = r[4]
-                created_at = r[6]
+                conf = r[2]
+                created_at = r[3]
                 
                 # Time Decay
                 age_hours = max(0, (now - created_at) / 3600.0)
@@ -422,18 +424,42 @@ class ReasoningStore:
                 
                 final_score = sim * decay * conf
                 
+                candidate_scores.append((r[0], final_score, sim, conf, created_at))
+
+        # Sort and fetch details
+        candidate_scores.sort(key=lambda x: x[1], reverse=True)
+        top_k_candidates = candidate_scores[:top_k]
+
+        if not top_k_candidates:
+            return []
+
+        top_ids = [x[0] for x in top_k_candidates]
+        placeholders = ','.join(['?'] * len(top_ids))
+
+        with self._connect() as con:
+            details_rows = con.execute(f"""
+                SELECT id, content, source, metadata
+                FROM reasoning_nodes
+                WHERE id IN ({placeholders})
+            """, top_ids).fetchall()
+
+        details_map = {r[0]: (r[1], r[2], r[3]) for r in details_rows}
+        results = []
+
+        for mid, final_score, sim, conf, created_at in top_k_candidates:
+            if mid in details_map:
+                d = details_map[mid]
                 results.append({
-                    "id": r[0],
-                    "content": r[1],
+                    "id": mid,
+                    "content": d[0],
                     "similarity": final_score,
                     "raw_similarity": sim,
-                    "source": r[3],
-                    "confidence": r[4],
-                    "metadata": json.loads(r[5]) if r[5] else None,
+                    "source": d[1],
+                    "confidence": conf,
+                    "metadata": json.loads(d[2]) if d[2] else None,
                 })
 
-        results.sort(key=lambda x: x["similarity"], reverse=True)
-        return results[:top_k]
+        return results
 
     # --------------------------
     # Housekeeping
