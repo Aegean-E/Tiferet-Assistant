@@ -227,6 +227,10 @@ class AIController:
             self.stop_processing_flag = False
             
             try:
+                # Update Last Interaction Time (Reset Loneliness)
+                if self.ai_core.self_model:
+                     self.ai_core.self_model.update_last_interaction()
+
                 # Determine Chat ID (Local uses 0 or configured ID, Telegram uses actual ID)
                 chat_id = telegram_chat_id if telegram_chat_id else int(self.app.settings.get("chat_id", 0) or 0)
                 

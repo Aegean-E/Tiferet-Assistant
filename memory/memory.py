@@ -1455,6 +1455,30 @@ class MemoryStore:
             for r in rows
         ]
 
+    def get_random_fact(self, min_confidence: float = 0.9) -> Optional[str]:
+        """Get a random high-confidence fact."""
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT text FROM memories WHERE type='FACT' AND confidence > ? AND deleted = 0 ORDER BY RANDOM() LIMIT 1",
+                (min_confidence,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def get_curiosity_gap_candidate(self) -> Optional[str]:
+        """Get a candidate fact for a curiosity gap (low confidence or specific keywords)."""
+        with self._connect() as con:
+            row = con.execute("""
+                SELECT text FROM memories
+                WHERE type = 'FACT' AND deleted = 0 AND parent_id IS NULL
+                AND (
+                    confidence < 0.75 OR
+                    (text LIKE '% son%' AND text NOT LIKE '%birthday%') OR
+                    (text LIKE '% daughter%' AND text NOT LIKE '%birthday%')
+                )
+                ORDER BY RANDOM() LIMIT 1
+            """).fetchone()
+        return row[0] if row else None
+
     def search_refuted(self, query_embedding: np.ndarray, limit: int = 3) -> List[Tuple]:
         """Specific search for REFUTED_BELIEF memories."""
         # 1. Fast Path: Use FAISS if available

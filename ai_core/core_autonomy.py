@@ -39,7 +39,8 @@ class AutonomyManager:
             "deep_planning", "strategy_refinement",
             "autonomous_think", # Autonomous Reasoning
             # Capability Improvement Actions (Meta-Strategic)
-            "improve_reasoning", "optimize_memory", "refine_tools"
+            "improve_reasoning", "optimize_memory", "refine_tools",
+            "initiate_conversation" # NEW
         ]
         self.action_counts = saved_state.get("action_counts", {action: 0 for action in self.actions})
         
@@ -57,30 +58,46 @@ class AutonomyManager:
                 # Meta-Strategic Features
                 "memory_bloat": 0.0,
                 "curiosity_drive": 0.0,
-                "reasoning_error_rate": 0.0
+                "reasoning_error_rate": 0.0,
+                "loneliness": 0.0 # NEW Feature
             } for action in self.actions
         }
         
-        if not saved_state.get("weights"):
-            # Initialize priors (Heuristics) only if no saved state
-            default_weights["pursue_goal"]["goal_pressure"] = 0.5
-            default_weights["study_archives"]["boredom"] = 0.3
-            default_weights["spark_curiosity"]["boredom"] = 0.6
-            default_weights["conduct_research"]["boredom"] = 0.5
-            default_weights["synthesis"]["boredom"] = 0.4
-            default_weights["introspection"]["confusion"] = 0.6
-            default_weights["self_correction"]["confusion"] = 0.4
-            default_weights["gap_investigation"]["confusion"] = 0.3
-            default_weights["introspection"]["entropy_pressure"] = 0.7
-            default_weights["deep_planning"]["pressure_x_confusion"] = 0.8
-            default_weights["autonomous_think"]["confusion"] = 0.7
-            default_weights["autonomous_think"]["entropy_pressure"] = 0.6
-            default_weights["strategy_refinement"]["success_momentum"] = 0.6
-            default_weights["optimize_memory"]["memory_bloat"] = 0.8
-            default_weights["improve_reasoning"]["reasoning_error_rate"] = 0.7
-            default_weights["refine_tools"]["success_momentum"] = 0.4
+        # Initialize priors (Heuristics)
+        default_weights["pursue_goal"]["goal_pressure"] = 0.5
+        default_weights["study_archives"]["boredom"] = 0.3
+        default_weights["spark_curiosity"]["boredom"] = 0.6
+        default_weights["conduct_research"]["boredom"] = 0.5
+        default_weights["synthesis"]["boredom"] = 0.4
+        default_weights["introspection"]["confusion"] = 0.6
+        default_weights["self_correction"]["confusion"] = 0.4
+        default_weights["gap_investigation"]["confusion"] = 0.3
+        default_weights["introspection"]["entropy_pressure"] = 0.7
+        default_weights["deep_planning"]["pressure_x_confusion"] = 0.8
+        default_weights["autonomous_think"]["confusion"] = 0.7
+        default_weights["autonomous_think"]["entropy_pressure"] = 0.6
+        default_weights["strategy_refinement"]["success_momentum"] = 0.6
+        default_weights["optimize_memory"]["memory_bloat"] = 0.8
+        default_weights["improve_reasoning"]["reasoning_error_rate"] = 0.7
+        default_weights["refine_tools"]["success_momentum"] = 0.4
+        default_weights["initiate_conversation"]["loneliness"] = 0.8 # Strong trigger
+        default_weights["initiate_conversation"]["boredom"] = 0.2
         
-        self.weights = saved_state.get("weights", default_weights)
+        # Migration: Merge saved state with defaults (for new actions/features)
+        loaded_weights = saved_state.get("weights", {})
+        if loaded_weights:
+            for action, feats in default_weights.items():
+                if action not in loaded_weights:
+                    # New action
+                    loaded_weights[action] = feats
+                else:
+                    # Existing action, check for new features
+                    for f, v in feats.items():
+                        if f not in loaded_weights[action]:
+                            loaded_weights[action][f] = v
+            self.weights = loaded_weights
+        else:
+            self.weights = default_weights
 
         # Momentum for weight updates
         self.momentum = saved_state.get("momentum", {action: {feat: 0.0 for feat in self.weights[action]} for action in self.actions})
@@ -91,9 +108,18 @@ class AutonomyManager:
             "bias": 0.5, "goal_pressure": 0.0, "confusion": 0.0, "boredom": 0.0, "entropy_pressure": 0.0,
             "pressure_x_confusion": 0.0,
             "boredom_x_skill": 0.0, "memory_bloat": 0.0, "reasoning_error_rate": 0.0,
-            "success_momentum": 0.0
+            "success_momentum": 0.0,
+            "loneliness": 0.0
         }
-        self.v_weights = saved_state.get("v_weights", default_v_weights)
+
+        loaded_v_weights = saved_state.get("v_weights", {})
+        if loaded_v_weights:
+            for f, v in default_v_weights.items():
+                if f not in loaded_v_weights:
+                    loaded_v_weights[f] = v
+            self.v_weights = loaded_v_weights
+        else:
+            self.v_weights = default_v_weights
         
         # Action-specific bias for critic (V(s)) to prevent leakage
         self.v_action_bias = saved_state.get("v_action_bias", {action: 0.0 for action in self.actions})
@@ -465,6 +491,23 @@ class AutonomyManager:
              # For now, we simulate it by analyzing tool failures
              self.core.thread_pool.submit(async_feedback_wrapper, self.core.meta_learner.analyze_failures)
         
+        elif action_name == "initiate_conversation":
+             msg_context = self.core.chokmah.pick_conversation_starter()
+             if self.core.event_bus:
+                 self.core.event_bus.publish("SYSTEM:SPONTANEOUS_SPEECH", {"context": msg_context})
+
+             # Immediate Feedback Update (Manual)
+             end_utility = self.core.decider.calculate_utility() if self.core.decider else 0.5
+             new_features = self._get_current_features(None)
+             reward_val = end_utility - start_utility
+
+             self.replay_buffer.append((features, action_name, reward_val, new_features, []))
+             self.update_policy(action_name, start_utility, end_utility, features, new_features)
+
+             # Satisfy Loneliness
+             if self.core.drive_system:
+                self.core.drive_system.satisfy_drive("loneliness", 0.4)
+
         # Check for Value Conflicts (Goal Generation)
         if random.random() < 0.1: # 10% chance to check for deep conflicts
             self.core.thread_pool.submit(self.generate_goals_from_conflict)
@@ -506,6 +549,8 @@ class AutonomyManager:
         # Reasoning Error Rate: Inverse of stability/coherence
         reasoning_error_rate = 1.0 - (self.core.keter.evaluate().get("keter", 1.0) if self.core.keter else 1.0)
 
+        loneliness = self.core.self_model.get_drives().get("loneliness", 0.0) if self.core.self_model else 0.0
+
         return {
             "bias": 1.0,
             "goal_pressure": goal_pressure,
@@ -516,7 +561,8 @@ class AutonomyManager:
             "boredom_x_skill": boredom_x_skill,
             "success_momentum": self.utility_ema, # Use recent utility trend as momentum feature
             "memory_bloat": memory_bloat,
-            "reasoning_error_rate": reasoning_error_rate
+            "reasoning_error_rate": reasoning_error_rate,
+            "loneliness": loneliness
         }
 
     def update_policy(self, action_name: str, start_utility: float, end_utility: float, features: Dict[str, float], next_features: Dict[str, float], is_dream: bool = False):
@@ -691,7 +737,7 @@ class AutonomyManager:
         Checks alignment with Core Values.
         """
         # Optimization: Skip expensive simulation for low-risk actions
-        if action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity"]:
+        if action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity", "initiate_conversation"]:
             return {"allowed": True}
 
         if not self.core.self_model: return {"allowed": True}

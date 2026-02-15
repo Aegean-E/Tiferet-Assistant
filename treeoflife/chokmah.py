@@ -703,3 +703,41 @@ class Chokmah:
                 "context": f"I found these new papers on {topic}:\n{results[:1000]}..."
             })
         return True
+
+    def pick_conversation_starter(self) -> str:
+        """
+        Generates a context trigger for proactive conversation.
+        """
+        options = ["gap", "fact", "goal", "checkin"]
+        weights = [0.3, 0.3, 0.2, 0.2]
+        choice = random.choices(options, weights=weights, k=1)[0]
+
+        self.log(f"☁️ Chokmah: Picking conversation starter ({choice})...")
+
+        if choice == "gap":
+            # Reuse investigate_gaps logic but return text
+            candidate_text = self.memory_store.get_curiosity_gap_candidate()
+            if candidate_text:
+                return f"Curiosity Gap: I was thinking about '{candidate_text}' and realized I'm missing details."
+            # Fallback
+            choice = "fact"
+
+        if choice == "fact":
+             fact_text = self.memory_store.get_random_fact()
+             if fact_text:
+                 return f"Fact Share: Did you know? {fact_text}"
+             # Fallback
+             choice = "checkin"
+
+        if choice == "goal":
+             # We rely on get_active_by_type returning rows, where text is likely index 2
+             goals = self.memory_store.get_active_by_type("GOAL")
+             if goals:
+                 g = random.choice(goals)
+                 # Typically index 2 is text for standard select queries in memory_store
+                 text = g[2] if len(g) > 2 else str(g)
+                 return f"Goal Update: I am currently working on '{text}'."
+             choice = "checkin"
+
+        # Fallback: Check-in
+        return "Social Check-in: I was just wondering how you are doing."
