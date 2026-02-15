@@ -1187,21 +1187,24 @@ class DesktopAssistantApp(DesktopAssistantUI):
         """
         try:
             # 1. Fetch Notes
-            items = self.memory_store.list_recent(limit=None)
-            # Filter for NOTE type
-            notes = [item for item in items if item[1] == "NOTE"]
+            # Optimization: Use get_active_by_type instead of list_recent(limit=None)
+            # Returns: (id, subject, text, source, confidence, progress)
+            notes = self.memory_store.get_active_by_type("NOTE")
 
             # Also fetch Self-Knowledge (Rules about self)
-            self_knowledge = [item for item in items if item[4] == "meta_learner_self_model"]
+            # We look in RULE and FACT types for source "meta_learner_self_model"
+            rules = self.memory_store.get_active_by_type("RULE")
+            facts = self.memory_store.get_active_by_type("FACT")
+            self_knowledge = [item for item in (rules + facts) if item[3] == "meta_learner_self_model"]
 
             # Fetch Self-Narratives (Autobiography) from Meta-Memory
             narratives = []
             if self.meta_memory_store:
                 narratives = self.meta_memory_store.get_by_event_type("SELF_NARRATIVE", limit=100)
 
-            # Sort chronologically (list_recent is DESC, so reverse)
-            notes.reverse()
-            self_knowledge.reverse()
+            # Sort chronologically by ID (oldest first)
+            notes.sort(key=lambda x: x[0])
+            self_knowledge.sort(key=lambda x: x[0])
             narratives.sort(key=lambda x: x['created_at'])
 
             if not notes and not narratives and not self_knowledge:
@@ -1218,14 +1221,14 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
             # Add Notes (The Thoughts)
             for note in notes:
-                # note: (id, type, subject, text, ...)
-                content += f"Entry [ID:{note[0]}]:\n{note[3]}\n\n" + ("-"*30) + "\n\n"
+                # note: (id, subject, text, ...)
+                content += f"Entry [ID:{note[0]}]:\n{note[2]}\n\n" + ("-"*30) + "\n\n"
 
             # Add Self-Knowledge (The Rules)
             if self_knowledge:
                 content += "SELF-KNOWLEDGE (LEARNED RULES)\n==============================\n"
                 for sk in self_knowledge:
-                    content += f"- {sk[3]}\n"
+                    content += f"- {sk[2]}\n"
 
             # 3. Write to Docs Folder
             docs_dir = config.UPLOADED_DOCS_DIR

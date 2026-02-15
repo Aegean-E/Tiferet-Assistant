@@ -319,7 +319,10 @@ class LLMRequest:
         """Injects dynamic evolved logic into the system prompt."""
         evolved_logic = _get_epigenetics_logic()
         if evolved_logic and len(evolved_logic) > 10:
-            self.system_prompt += f"\n\n[DYNAMIC EVOLVED LOGIC]:\nApply the following logic unless it conflicts with:\n1. Core safety invariants\n2. Epistemic validation rules\n3. System architecture constraints\n\nLOGIC:\n{evolved_logic}"
+            # Prevent duplicate injection (Fix for recursion bug)
+            marker = "[DYNAMIC EVOLVED LOGIC]"
+            if marker not in self.system_prompt:
+                self.system_prompt += f"\n\n{marker}:\nApply the following logic unless it conflicts with:\n1. Core safety invariants\n2. Epistemic validation rules\n3. System architecture constraints\n\nLOGIC:\n{evolved_logic}"
 
     def _prepare_messages(self):
         """Prepares the final message list, handling vision and context trimming."""
