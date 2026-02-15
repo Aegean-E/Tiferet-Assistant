@@ -109,5 +109,29 @@ class TestMemorySearch(unittest.TestCase):
              memory.memory.FAISS_AVAILABLE = original_faiss_avail
              self.store.faiss_index = None
 
+    def test_search_fallback(self):
+        """Test the search fallback path (no FAISS)"""
+        original_faiss_avail = memory.memory.FAISS_AVAILABLE
+        memory.memory.FAISS_AVAILABLE = False
+        try:
+            # Insert data
+            emb1 = np.array([1.0, 0.0], dtype='float32')
+            emb2 = np.array([0.0, 1.0], dtype='float32')
+            self.store.add_entry(identity="id1", text="t1", mem_type="FACT", confidence=1.0, source="test", embedding=emb1)
+            self.store.add_entry(identity="id2", text="t2", mem_type="FACT", confidence=1.0, source="test", embedding=emb2)
+
+            # Query close to emb1
+            query = np.array([0.9, 0.1], dtype='float32')
+            query = query / np.linalg.norm(query)
+
+            res = self.store.search(query, limit=1)
+
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0][3], "t1") # text is at index 3 in search results
+            self.assertTrue(res[0][4] > 0.8) # similarity high
+
+        finally:
+            memory.memory.FAISS_AVAILABLE = original_faiss_avail
+
 if __name__ == '__main__':
     unittest.main()
