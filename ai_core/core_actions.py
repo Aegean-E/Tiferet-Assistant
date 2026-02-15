@@ -32,6 +32,7 @@ class ActionManager:
         tools = {
             # 1. Basic Tools
             "CLOCK": lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "SYSTEM_INFO": lambda: self._system_info_tool(),
             "CALCULATOR": lambda x: self._safe_calculate(x),
             "PHYSICS": lambda q: self._physics_intuition(q),
             "SIMULATE_PHYSICS": lambda q: self._simulate_physics(q),
@@ -565,3 +566,26 @@ class ActionManager:
         self.load_plugins()
 
         return f"Plugin '{plugin_name}' enabled and loaded."
+
+    def _system_info_tool(self) -> str:
+        """Get system hardware and OS info."""
+        import platform
+        try:
+            import psutil
+        except ImportError:
+            psutil = None
+
+        info = [
+            f"OS: {platform.system()} {platform.release()}",
+            f"Python: {platform.python_version()}"
+        ]
+
+        if psutil:
+            mem = psutil.virtual_memory()
+            info.append(f"Memory: {mem.percent}% used ({mem.used // (1024*1024)}MB / {mem.total // (1024*1024)}MB)")
+            cpu = psutil.cpu_percent(interval=0.1)
+            info.append(f"CPU: {cpu}%")
+        else:
+            info.append("Hardware info unavailable (psutil missing).")
+
+        return "\n".join(info)
