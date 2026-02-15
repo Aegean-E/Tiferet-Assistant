@@ -897,6 +897,13 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
         self.status_var.set("Feedback recorded. Thank you!")
 
+    def _download_telegram_file(self, file_id: str, local_path: str) -> None:
+        """Helper to download a file from Telegram given its file_id."""
+        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+        file_data = self.telegram_bridge.get_file_info(file_id)
+        telegram_file_path = file_data["file_path"]
+        self.telegram_bridge.download_file(telegram_file_path, local_path)
+
     def handle_telegram_document(self, msg: Dict):
         """Handle document upload from Telegram"""
         try:
@@ -913,16 +920,11 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
             self.telegram_bridge.send_message(f"📄 Received {file_name}, processing...")
 
-            # Get file path from Telegram
-            file_data = self.telegram_bridge.get_file_info(file_id)
-            telegram_file_path = file_data["file_path"]
-
             # Download
             local_dir = "./data/uploaded_docs"
-            os.makedirs(local_dir, exist_ok=True)
             local_file_path = os.path.join(local_dir, file_name)
             
-            self.telegram_bridge.download_file(telegram_file_path, local_file_path)
+            self._download_telegram_file(file_id, local_file_path)
 
             # Check duplicates
             file_hash = self.document_store.compute_file_hash(local_file_path)
@@ -1012,8 +1014,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
             # Download to temp
             temp_path = f"./data/temp_img_{file_id}.jpg"
-            file_data = self.telegram_bridge.get_file_info(file_id)
-            self.telegram_bridge.download_file(file_data["file_path"], temp_path)
+            self._download_telegram_file(file_id, temp_path)
             
             self.root.after(0, lambda m=msg, c=caption, p=temp_path: self.add_chat_message(m["from"], c, "incoming", image_path=p))
             
@@ -1033,14 +1034,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
             self.root.after(0, lambda: self.status_var.set("🎙️ Receiving voice message..."))
             
-            file_data = self.telegram_bridge.get_file_info(file_id)
-            telegram_file_path = file_data["file_path"]
-            
             temp_dir = "./data/temp_uploads"
-            os.makedirs(temp_dir, exist_ok=True)
             local_file_path = os.path.join(temp_dir, f"voice_{file_id}.ogg")
             
-            self.telegram_bridge.download_file(telegram_file_path, local_file_path)
+            self._download_telegram_file(file_id, local_file_path)
             
             self.root.after(0, lambda: self.status_var.set("📝 Transcribing voice..."))
             text = transcribe_audio(local_file_path)
