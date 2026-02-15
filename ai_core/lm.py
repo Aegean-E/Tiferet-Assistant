@@ -629,7 +629,8 @@ def _persistent_embedding_cache(func):
 
     def wrapper(text: str, base_url: str = None, embedding_model: str = None) -> np.ndarray:
         # Generate a hash for the text and model to use as cache key
-        model_name = embedding_model
+        # Bolt: Fix crash when embedding_model is None by using global default
+        model_name = embedding_model if embedding_model else EMBEDDING_MODEL
         text_hash = hashlib.sha256((text + model_name).encode('utf-8')).hexdigest()
 
         # Try to get from persistent cache first
@@ -638,7 +639,8 @@ def _persistent_embedding_cache(func):
             return cached_emb
 
         # If not in persistent cache, compute it
-        emb = func(text, base_url, model_name)
+        # Pass original args so func can resolve defaults internally if needed
+        emb = func(text, base_url, embedding_model)
 
         # Save to persistent cache
         _save_embedding_to_cache(text_hash, model_name, emb)
@@ -652,6 +654,7 @@ def _persistent_embedding_cache(func):
 # ==============================
 
 @lru_cache(maxsize=1000)
+@_persistent_embedding_cache
 def compute_embedding(text: str, base_url: str = None, embedding_model: str = None) -> np.ndarray:
     if base_url is None:
         base_url = LM_STUDIO_BASE_URL
