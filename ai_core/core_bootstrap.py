@@ -114,6 +114,7 @@ class BootstrapManager:
                 memory_store=self.core.memory_store,
                 meta_memory_store=self.core.meta_memory_store,
                 reasoning_store=self.core.reasoning_store,
+                document_store=self.core.document_store,
                 get_settings_fn=self.core.get_settings,
                 embed_fn=self.core.get_embedding_fn(),
                 log_fn=self.core.log

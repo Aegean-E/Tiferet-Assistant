@@ -35,15 +35,136 @@ class Daat:
         meta_memory_store,
         reasoning_store,
         get_settings_fn: Callable[[], Dict],
+        document_store=None,
         embed_fn: Optional[Callable[[str], np.ndarray]] = None,
         log_fn: Callable[[str], None] = logging.info
     ):
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
         self.reasoning_store = reasoning_store
+        self.document_store = document_store
         self.get_settings = get_settings_fn
         self.embed_fn = embed_fn
         self.log = log_fn
+
+    def ingest_external_knowledge(self, content: str, source: str, title: Optional[str] = None):
+        """
+        Ingest knowledge from external sources (Web, Docs).
+        Summarizes content and extracts key facts.
+        """
+        self.log(f"📥 Da'at: Ingesting external knowledge from {source}...")
+        settings = self.get_settings()
+
+        # 1. Summarize
+        prompt_summary = (
+            f"SOURCE: {source}\n"
+            f"CONTENT:\n{content[:8000]}\n\n"  # Limit context
+            "TASK: Summarize this content into a dense, high-level overview (1 paragraph).\n"
+            "Focus on the core message, key findings, or main argument."
+        )
+
+        summary = run_local_lm(
+            messages=[{"role": "user", "content": prompt_summary}],
+            system_prompt="You are a Knowledge Ingestor.",
+            max_tokens=300,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+
+        if summary and not summary.startswith("⚠️"):
+            # Store Summary
+            summary_text = f"External Knowledge Summary ({source}): {summary}"
+            summary_id = self.memory_store.add_entry(
+                identity=self.memory_store.compute_identity(summary_text, "FACT"),
+                text=summary_text,
+                mem_type="FACT",
+                subject="External Knowledge",
+                confidence=0.9,
+                source=f"ingest:{source}"
+            )
+
+            # 2. Extract Key Facts (Bullet points)
+            prompt_facts = (
+                f"CONTENT SUMMARY: {summary}\n\n"
+                "TASK: Extract 3-5 distinct, standalone FACTS from this content.\n"
+                "Format: JSON list of strings."
+            )
+
+            facts_json = run_local_lm(
+                messages=[{"role": "user", "content": prompt_facts}],
+                system_prompt="You are a Fact Extractor.",
+                max_tokens=300,
+                base_url=settings.get("base_url"),
+                chat_model=settings.get("chat_model")
+            )
+
+            facts = parse_json_array_loose(facts_json)
+            for fact in facts:
+                if isinstance(fact, str) and len(fact) > 10:
+                    self.memory_store.add_entry(
+                        identity=self.memory_store.compute_identity(fact, "FACT"),
+                        text=fact,
+                        mem_type="FACT",
+                        subject="External Knowledge",
+                        confidence=0.85,
+                        source=f"ingest:{source}",
+                        parent_id=summary_id
+                    )
+
+            return f"Ingested content from {source}. Summary and {len(facts)} facts stored."
+        return "Failed to ingest content."
+
+    def summarize_and_index_document(self, file_hash: str, filename: str):
+        """
+        Generate a summary for an ingested document and store it in memory.
+        """
+        if not self.document_store:
+            return "Document store not available."
+
+        self.log(f"📄 Da'at: Summarizing document {filename}...")
+        settings = self.get_settings()
+
+        # Fetch first few chunks for summary (intro/abstract usually here)
+        chunks = self.document_store.get_document_chunks(file_hash=file_hash)
+        if not chunks:
+            # Try fetching by filename if hash fails (fallback)
+            docs = self.document_store.list_documents()
+            doc = next((d for d in docs if d[1] == filename), None)
+            if doc:
+                chunks = self.document_store.get_document_chunks(doc_id=doc[0])
+
+        if not chunks:
+            return f"No chunks found for {filename}."
+
+        # Use first 3000 chars roughly
+        text_preview = "\n".join([c['text'] for c in chunks[:5]])[:4000]
+
+        prompt = (
+            f"DOCUMENT: {filename}\n"
+            f"BEGINNING TEXT:\n{text_preview}\n\n"
+            "TASK: Generate a concise summary of this document.\n"
+            "What is it about? What are the key themes?"
+        )
+
+        summary = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Librarian.",
+            max_tokens=300,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+
+        if summary and not summary.startswith("⚠️"):
+            self.memory_store.add_entry(
+                identity=self.memory_store.compute_identity(f"Document Summary: {filename}", "FACT"),
+                text=f"📚 Document Summary ({filename}): {summary}",
+                mem_type="FACT",
+                subject="Library",
+                confidence=1.0,
+                source=f"doc:{filename}"
+            )
+            return f"Summarized {filename}."
+        return "Failed to summarize."
 
     def run_summarization(self):
         """
