@@ -300,6 +300,7 @@ class LLMRequest:
             self.chat_model = settings.get("chat_model", CHAT_MODEL)
 
         self.stop_check_fn = self.kwargs.get("stop_check_fn")
+        self.stream_callback = self.kwargs.get("stream_callback")
         self.images = self.kwargs.get("images")
         self.retry_depth = self.kwargs.get("_retry_depth", 0)
 
@@ -364,12 +365,12 @@ class LLMRequest:
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
         }
-        if self.stop_check_fn:
+        if self.stop_check_fn or self.stream_callback:
             self.payload["stream"] = True
 
     def _check_cache(self) -> Optional[str]:
         """Checks the in-memory cache for deterministic requests."""
-        if self.temperature is not None and self.temperature < 0.1 and not self.stop_check_fn and not self.images:
+        if self.temperature is not None and self.temperature < 0.1 and not self.stop_check_fn and not self.stream_callback and not self.images:
             # Create a hashable key from messages and model params
             msg_str = json.dumps(self.final_messages, sort_keys=True)
             self.cache_key = f"{self.chat_model}_{msg_str}_{self.max_tokens}_{self.temperature}"
@@ -402,7 +403,7 @@ class LLMRequest:
 
         try:
             with GPU_SEMAPHORE:
-                if self.stop_check_fn:
+                if self.stop_check_fn or self.stream_callback:
                     return self._execute_streaming(chat_completions_url, start_time)
                 else:
                     return self._execute_standard(chat_completions_url, start_time)
@@ -436,6 +437,8 @@ class LLMRequest:
                             content = delta.get("content", "")
                             if content:
                                 full_content += content
+                                if self.stream_callback:
+                                    self.stream_callback(content)
                         except:
                             pass
         latency = time.time() - start_time
@@ -471,55 +474,14 @@ class LLMRequest:
                 logging.info("🔄 Auto-retrying with pruned context...")
                 return run_local_lm(
                     self.messages[1:],
-                    system_prompt=self.system_prompt, # Use resolved system prompt? Original code passed original arg.
-                    # If I use resolved, I might double-inject epigenetics?
-                    # Original code: return run_local_lm(messages[1:], system_prompt, ...)
-                    # Where system_prompt was the argument (or default).
-                    # Epigenetics was injected into system_prompt variable, but that variable was local.
-                    # Wait, in original code:
-                    # if system_prompt is None: system_prompt = settings...
-                    # evolved_logic = ...
-                    # if evolved_logic: system_prompt += ...
-                    # Then recursive call uses `system_prompt`.
-                    # So yes, it passes the MODIFIED system prompt.
-                    # This means epigenetics gets appended AGAIN?
-                    # "system_prompt += ..." modifies the local variable.
-                    # If I pass it back to run_local_lm, the new call will see it as not None.
-                    # Then it will append epigenetics AGAIN.
-                    # This looks like a bug in the original code!
-
-                    # Let's check original code:
-                    # system_prompt += f"\n\n[DYNAMIC EVOLVED LOGIC]..."
-                    # return run_local_lm(..., system_prompt, ...)
-                    # Next call: system_prompt is passed.
-                    # evolved_logic = ...
-                    # if evolved_logic: system_prompt += ...
-                    # Yes, it duplicates epigenetics!
-
-                    # I should preserve this behavior to be safe, OR fix it if it's clearly a bug.
-                    # "Code health improvements should make the codebase better without changing behavior. When in doubt, preserve functionality over cleanliness."
-                    # However, duplicating prompt sections is definitely bad.
-                    # But if I fix it, I might break something relying on the token count or behavior (unlikely).
-                    # Actually, if the error is 400 (context length), making the prompt longer is counter-productive.
-                    # So fixing this bug is also a fix for the retry logic.
-
-                    # But to keep strictly to "refactor", I should mimic it.
-                    # Wait, if I use my class, I can avoid this.
-                    # But the recursive call calls `run_local_lm`.
-                    # If I call `run_local_lm(..., system_prompt=self.system_prompt)`, I am passing the modified prompt.
-                    # The new instance of LLMRequest will take it.
-                    # It will append epigenetics again.
-
-                    # I will stick to exact behavior for now to pass tests/verification.
-                    # Wait, my test didn't cover retry recursion.
-
-                    # Let's pass the parameters as they are currently in the instance, which includes the modified system_prompt.
+                    system_prompt=self.system_prompt,
                     temperature=self.temperature,
                     top_p=self.top_p,
                     max_tokens=self.max_tokens,
                     base_url=self.base_url,
                     chat_model=self.chat_model,
                     stop_check_fn=self.stop_check_fn,
+                    stream_callback=self.stream_callback,
                     _retry_depth=self.retry_depth + 1
                 )
 
@@ -536,6 +498,7 @@ class LLMRequest:
                     base_url=self.base_url,
                     chat_model=self.chat_model,
                     stop_check_fn=self.stop_check_fn,
+                    stream_callback=self.stream_callback,
                     _retry_depth=self.retry_depth + 1
                 )
 
@@ -552,6 +515,7 @@ def run_local_lm(
         chat_model: str = None,
         stop_check_fn: Optional[Callable[[], bool]] = None,
         images: List[str] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
         _retry_depth: int = 0
 ) -> str:
     request = LLMRequest(
@@ -564,6 +528,7 @@ def run_local_lm(
         chat_model=chat_model,
         stop_check_fn=stop_check_fn,
         images=images,
+        stream_callback=stream_callback,
         _retry_depth=_retry_depth
     )
     return request.execute()
@@ -651,6 +616,7 @@ def _persistent_embedding_cache(func):
 # Embeddings via LM Studio
 # ==============================
 
+@_persistent_embedding_cache
 @lru_cache(maxsize=1000)
 def compute_embedding(text: str, base_url: str = None, embedding_model: str = None) -> np.ndarray:
     if base_url is None:

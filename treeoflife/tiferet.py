@@ -376,8 +376,8 @@ class Decider:
     def handle_natural_language_command(self, text: str, status_callback: Callable[[str], None] = None) -> Optional[str]:
         return self.chat_handler.handle_natural_language_command(text, status_callback)
 
-    def process_chat_message(self, user_text: str, history: List[Dict], status_callback: Callable[[str], None] = None, image_path: Optional[str] = None, stop_check_fn: Callable[[], bool] = None) -> str:
-        return self.chat_handler.process_chat_message(user_text, history, status_callback, image_path, stop_check_fn)
+    def process_chat_message(self, user_text: str, history: List[Dict], status_callback: Callable[[str], None] = None, image_path: Optional[str] = None, stop_check_fn: Callable[[], bool] = None, stream_callback: Callable[[str], None] = None) -> str:
+        return self.chat_handler.process_chat_message(user_text, history, status_callback, image_path, stop_check_fn, stream_callback)
 
     def run_autonomous_cycle(self):
         return self.goal_manager.run_autonomous_cycle()
