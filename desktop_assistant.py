@@ -15,6 +15,7 @@ import os
 import shutil
 from collections import deque
 from typing import Dict, List, Optional
+import config
 
 # Import AI Core
 from ai_core.ai_core import AICore
@@ -27,7 +28,7 @@ from docs.commands import handle_command as process_command_logic
 from components.voice_manager import VoiceManager
 from components.telegram_manager import TelegramManager
 
-CURRENT_SETTINGS_VERSION = 1.1
+CURRENT_SETTINGS_VERSION = 1.2
 
 class UILogHandler(logging.Handler):
     """Redirects logging records to the UI's log method."""
@@ -43,12 +44,13 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def __init__(self, root):
         self.root = root
+        config.ensure_data_directories()
         self.root.title("AI Desktop Assistant")
         self.root.geometry("1200x800")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Track the settings file path first
-        self.settings_file_path = "./settings.json"
+        self.settings_file_path = config.SETTINGS_FILE_PATH
         self.settings_lock = threading.RLock()
 
         # Initialize logging buffers early (migration might log)
@@ -99,9 +101,6 @@ class DesktopAssistantApp(DesktopAssistantUI):
         ui_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
         self.logger.addHandler(ui_handler)
         self.redirect_logging()
-        
-        # Redirect stdout/stderr to logging
-        # self.redirect_logging() # Disabled in favor of standard logging
 
         # Initialize Brain (Memory & Documents) - Moved after UI setup to capture logs
         self.chat_sessions = {} # {session_id: {'name': str, 'history': []}}
@@ -396,6 +395,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 "temperature": 0.7,
                 "top_p": 0.94,
                 "max_tokens": 800,
+                "epigenetics_path": "./data/epigenetics.json",
                 "daydream_cycle_limit": 10,
                 "max_inconclusive_attempts": 3,
                 "max_retrieval_failures": 3,
@@ -408,6 +408,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 "system_prompt": DEFAULT_SYSTEM_PROMPT,
                 "memory_extractor_prompt": DEFAULT_MEMORY_EXTRACTOR_PROMPT,
                 "daydream_extractor_prompt": DAYDREAM_EXTRACTOR_PROMPT,
+                "backup_dir": "./data/backups",
                 "permissions": {
                     "SEARCH": True, "WIKI": True, "FIND_PAPER": True, 
                     "CALCULATOR": True, "CLOCK": True, "SYSTEM_INFO": True,
@@ -429,6 +430,11 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 settings["plugin_config"] = {}
             if "faiss_save_threshold" not in settings:
                 settings["faiss_save_threshold"] = 50
+
+        if old_version < 1.2:
+            # Add new fields for v1.2
+            if "epigenetics_path" not in settings:
+                settings["epigenetics_path"] = "./data/epigenetics.json"
             
         settings["version"] = CURRENT_SETTINGS_VERSION
         self.save_settings_to_file(settings)
@@ -691,7 +697,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
         self.message_entry.delete(0, tk.END)
 
         # Create a temp copy to avoid deleting the user's original file
-        temp_dir = "./data/temp_uploads"
+        temp_dir = config.TEMP_UPLOADS_DIR
         os.makedirs(temp_dir, exist_ok=True)
         filename = os.path.basename(file_path)
         temp_path = os.path.join(temp_dir, f"temp_{int(time.time())}_{filename}")
@@ -877,7 +883,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                     content += f"- {sk[3]}\n"
 
             # 3. Write to Docs Folder
-            docs_dir = "./data/uploaded_docs"
+            docs_dir = config.UPLOADED_DOCS_DIR
             os.makedirs(docs_dir, exist_ok=True)
             filename = "assistant_journal.txt"
             file_path = os.path.join(docs_dir, filename)

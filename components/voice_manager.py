@@ -5,6 +5,7 @@ import logging
 import tkinter as tk
 from tkinter import messagebox
 from ai_core.lm import transcribe_audio
+import config
 
 # Audio recording
 try:
@@ -59,7 +60,7 @@ class VoiceManager:
                 p.terminate()
 
                 # Save to file
-                temp_wav = "./data/temp_voice_input.wav"
+                temp_wav = config.TEMP_VOICE_INPUT_FILE
                 wf = wave.open(temp_wav, 'wb')
                 wf.setnchannels(channels)
                 wf.setsampwidth(p.get_sample_size(format))

@@ -6,6 +6,7 @@ import time
 import os
 from bridges.telegram_api import TelegramBridge
 from ai_core.lm import transcribe_audio
+import config
 
 class TelegramManager:
     def __init__(self, app):
@@ -153,8 +154,28 @@ class TelegramManager:
 
         threading.Thread(target=reset_flag, daemon=True).start()
 
+    def _is_authorized(self, chat_id) -> bool:
+        """Check if the incoming chat_id is authorized."""
+        try:
+            authorized_id = str(self.app.settings.get("chat_id", "")).strip()
+            if not authorized_id:
+                return False
+
+            # Compare as strings to handle potential type mismatches
+            if str(chat_id) != authorized_id:
+                logging.warning(f"⚠️ Unauthorized Telegram access attempt from chat_id: {chat_id}")
+                return False
+
+            return True
+        except Exception as e:
+            logging.error(f"Authorization check error: {e}")
+            return False
+
     def handle_telegram_text(self, msg):
         """Handle text message from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         # Reset status suppression on interaction
         self.status_sent = False
 
@@ -177,12 +198,15 @@ class TelegramManager:
 
     def handle_telegram_photo(self, msg):
         """Handle photo from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         try:
             file_id = msg["photo"]["file_id"]
             caption = msg.get("caption", "") or "Analyze this image."
 
             # Download to temp
-            temp_path = f"./data/temp_img_{file_id}.jpg"
+            temp_path = os.path.join(config.DATA_DIR, f"temp_img_{file_id}.jpg")
             file_data = self.bridge.get_file_info(file_id)
             self.bridge.download_file(file_data["file_path"], temp_path)
 
@@ -198,6 +222,9 @@ class TelegramManager:
 
     def handle_telegram_voice(self, msg):
         """Handle voice message from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         try:
             file_id = msg["voice"]["file_id"]
             chat_id = msg["chat_id"]
@@ -207,7 +234,7 @@ class TelegramManager:
             file_data = self.bridge.get_file_info(file_id)
             telegram_file_path = file_data["file_path"]
 
-            temp_dir = "./data/temp_uploads"
+            temp_dir = config.TEMP_UPLOADS_DIR
             os.makedirs(temp_dir, exist_ok=True)
             local_file_path = os.path.join(temp_dir, f"voice_{file_id}.ogg")
 
@@ -238,6 +265,9 @@ class TelegramManager:
 
     def handle_telegram_document(self, msg):
         """Handle document upload from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         try:
             file_info = msg["document"]
             file_id = file_info["file_id"]
@@ -256,7 +286,7 @@ class TelegramManager:
             telegram_file_path = file_data["file_path"]
 
             # Download
-            local_dir = "./data/uploaded_docs"
+            local_dir = config.UPLOADED_DOCS_DIR
             os.makedirs(local_dir, exist_ok=True)
             local_file_path = os.path.join(local_dir, file_name)
 
