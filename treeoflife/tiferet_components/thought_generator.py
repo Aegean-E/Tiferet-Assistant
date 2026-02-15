@@ -47,14 +47,16 @@ class ThoughtGenerator:
         # Dispatch
         try:
             if selected_strategy == ThinkingStrategy.LINEAR:
-                self._perform_linear_chain(topic)
+                self._run_thought_chain(topic, self._perform_linear_chain, "Linear Reasoning")
             elif selected_strategy == ThinkingStrategy.DIALECTIC:
-                self._perform_dialectical(topic)
+                self._run_thought_chain(topic, self._perform_dialectical, "Dialectic Debate")
             elif selected_strategy == ThinkingStrategy.FIRST_PRINCIPLES:
-                self._perform_first_principles(topic)
+                self._run_thought_chain(topic, self._perform_first_principles, "First Principles")
             else:
                 # Default to Tree of Thoughts
-                self._perform_tree_of_thoughts(topic, max_depth, beam_width)
+                # ToT needs extra args, so we use a lambda or partial
+                self._run_thought_chain(topic, lambda t, c: self._perform_tree_of_thoughts(t, c, max_depth, beam_width), "Tree of Thoughts")
+
         except Exception as e:
             self.decider.log(f"❌ Thinking Chain failed ({selected_strategy.name}): {e}")
             self.decider.command_executor.create_note(f"Thinking Error ({topic}): {e}")
@@ -88,139 +90,39 @@ class ThoughtGenerator:
         if "FIRST" in response: return ThinkingStrategy.FIRST_PRINCIPLES
         return ThinkingStrategy.TREE_OF_THOUGHTS
 
-    def _perform_linear_chain(self, topic: str):
-        """Simple sequential reasoning."""
-        context = self._gather_thinking_context(topic)
-        prompt = (
-            f"{context}\n"
-            "TASK: Reason through this topic step-by-step to reach a conclusion.\n"
-            "Format:\n"
-            "1. <Point>\n"
-            "2. <Point>\n"
-            "...\n"
-            "Conclusion: <Final Thought>"
-        )
-
-        chain = run_local_lm(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Logical Engine.",
-            max_tokens=800,
-            base_url=self.decider.get_settings().get("base_url"),
-            chat_model=self.decider.get_settings().get("chat_model"),
-            stop_check_fn=self.decider.stop_check
-        )
-
-        self.decider.log(f"🧠 Linear Reasoning Complete.")
-        self.decider.command_executor.create_note(f"Linear Reasoning ({topic}):\n{chain}")
-        self.decider.reasoning_store.add(content=f"Linear Reasoning ({topic}): {chain}", source="linear_reasoning", confidence=1.0)
-        self.decider.decision_maker._reflect_on_decision(f"Linear Reasoning on {topic}", chain[:200] + "...")
-
-
-    def _perform_dialectical(self, topic: str):
-        """Dialectical debate (Thesis-Antithesis-Synthesis)."""
-        if self.decider.dialectics:
-            context = self._gather_thinking_context(topic)
-            result = self.decider.dialectics.run_debate(topic, context=context, reasoning_store=self.decider.reasoning_store)
-            self.decider.command_executor.create_note(f"Dialectic Synthesis ({topic}):\n{result}")
-        else:
-            self.decider.log("⚠️ Dialectics component missing. Fallback to Linear.")
-            self._perform_linear_chain(topic)
-
-    def _perform_first_principles(self, topic: str):
-        """First Principles decomposition."""
-        context = self._gather_thinking_context(topic)
-
-        # Step 1: Deconstruct
-        deconstruct_prompt = (
-            f"{context}\n"
-            "TASK: Deconstruct this topic into its most fundamental truths or axioms.\n"
-            "Discard all assumptions, analogies, and social conventions.\n"
-            "List ONLY the undeniable facts."
-        )
-        axioms = run_local_lm(
-            messages=[{"role": "user", "content": deconstruct_prompt}],
-            system_prompt="You are a First Principles Thinker.",
-            max_tokens=400,
-            base_url=self.decider.get_settings().get("base_url"),
-            chat_model=self.decider.get_settings().get("chat_model")
-        )
-
-        self.decider.log(f"🧠 Axioms found: {axioms[:100]}...")
-
-        # Step 2: Reconstruct
-        reconstruct_prompt = (
-            f"AXIOMS:\n{axioms}\n\n"
-            f"ORIGINAL TOPIC: {topic}\n"
-            "TASK: Rebuild a solution or understanding from these axioms alone.\n"
-            "Do not use external assumptions.\n"
-            "Derive the conclusion logically."
-        )
-
-        conclusion = run_local_lm(
-            messages=[{"role": "user", "content": reconstruct_prompt}],
-            system_prompt="You are a First Principles Thinker.",
-            max_tokens=600,
-            base_url=self.decider.get_settings().get("base_url"),
-            chat_model=self.decider.get_settings().get("chat_model")
-        )
-
-        full_text = f"First Principles Analysis on {topic}:\n\nAXIOMS:\n{axioms}\n\nCONCLUSION:\n{conclusion}"
-        self.decider.command_executor.create_note(full_text)
-        self.decider.reasoning_store.add(content=full_text, source="first_principles", confidence=1.0)
-        self.decider.decision_maker._reflect_on_decision(f"First Principles on {topic}", conclusion[:200] + "...")
-
-    def _perform_tree_of_thoughts(self, topic: str, max_depth: int = 10, beam_width: int = 3):
-        """Execute a Tree of Thoughts (ToT) reasoning process."""
+    def _run_thought_chain(self, topic: str, strategy_func, strategy_name: str):
+        """
+        Unified handler for executing a thought chain.
+        1. Gather Context
+        2. Execute Strategy
+        3. Synthesize & Store
+        """
         # 1. Gather Context
-        static_context = self._gather_thinking_context(topic)
+        context = self._gather_thinking_context(topic)
 
-        # Tree State: List of paths. A path is a list of thought strings.
-        # Start with one empty path
-        active_paths = [[]]
-        final_conclusion = None
-        best_path = []
+        # 2. Execute Strategy
+        # The strategy function must return a string (reasoning trace)
+        reasoning_trace = strategy_func(topic, context)
 
-        for depth in range(1, max_depth + 1):
-            if self.decider.stop_check():
-                break
+        if not reasoning_trace:
+            self.decider.log(f"⚠️ Strategy {strategy_name} returned no trace.")
+            return
 
-            if final_conclusion:
-                break
+        # 3. Synthesize Conclusion
+        summary = self._synthesize_conclusion(topic, reasoning_trace, strategy_name)
 
-            self.decider.log(f"🌳 Depth {depth}: Expanding {len(active_paths)} paths...")
+        # 4. Store & Log
+        full_record = f"Strategy: {strategy_name}\nTopic: {topic}\n\nREASONING TRACE:\n{reasoning_trace}\n\nFINAL SYNTHESIS:\n{summary}"
 
-            # Expansion Phase (Branching & Evaluation)
-            candidates, found_conclusion, found_path = self._expand_thought_paths(active_paths, static_context, beam_width, topic)
+        self.decider.command_executor.create_note(full_record)
+        self.decider.reasoning_store.add(content=full_record, source=f"thought_{strategy_name.lower().replace(' ', '_')}", confidence=1.0)
+        self.decider.decision_maker._reflect_on_decision(f"{strategy_name} on {topic}", summary[:200] + "...")
 
-            if found_conclusion:
-                final_conclusion = found_conclusion
-                best_path = found_path
-                break
-
-            # Selection Phase (Beam Search)
-            active_paths = self._select_best_paths(candidates, beam_width, depth, topic)
-            if active_paths:
-                # Update best path to the current best just in case we stop prematurely
-                best_path = active_paths[0]
-
-        if not final_conclusion and active_paths:
-            # If max depth reached without conclusion, take the best path
-            best_path = active_paths[0]
-            final_conclusion = "Max depth reached. Best partial reasoning path selected."
-        elif final_conclusion:
-             self.decider.command_executor.create_note(f"Conclusion on {topic}: {final_conclusion}")
-
-        # Post-chain Summarization
-        if best_path:
-            summary = self._summarize_thinking_chain(topic, best_path)
-
-            # Save summary as note if no formal conclusion was reached (e.g. interrupted by loop)
-            # This ensures partial progress is preserved in memory
-            if not final_conclusion:
-                self.decider.command_executor.create_note(f"ToT Summary ({topic}): {summary}")
+        if self.decider.chat_fn:
+            self.decider.chat_fn("Decider", f"🧠 {strategy_name} Conclusion:\n{summary}")
 
     def _gather_thinking_context(self, topic: str) -> str:
-        """Helper to gather relevant memories, documents, and subjective context for ToT."""
+        """Helper to gather relevant memories, documents, and subjective context."""
         settings = self.decider.get_settings()
         subjective_context = ""
 
@@ -261,6 +163,143 @@ class ThoughtGenerator:
 
         return static_context
 
+    def _synthesize_conclusion(self, topic: str, reasoning_trace: str, strategy_name: str) -> str:
+        """Synthesize the final conclusion from the reasoning trace."""
+        settings = self.decider.get_settings()
+        prompt = (
+            f"TOPIC: {topic}\n"
+            f"STRATEGY USED: {strategy_name}\n\n"
+            f"REASONING TRACE:\n{reasoning_trace}\n\n"
+            "TASK: Synthesize a clear, coherent, and actionable conclusion from the reasoning above.\n"
+            "Highlight the key insights and the final answer.\n"
+        )
+
+        summary = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Master Synthesizer. You distill complex reasoning into clarity.",
+            temperature=0.3,
+            max_tokens=400,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+        return summary
+
+    def _perform_linear_chain(self, topic: str, context: str) -> str:
+        """Simple sequential reasoning."""
+        prompt = (
+            f"{context}\n"
+            "TASK: Reason through this topic step-by-step to reach a conclusion.\n"
+            "Format:\n"
+            "1. <Point>\n"
+            "2. <Point>\n"
+            "...\n"
+            "Conclusion: <Final Thought>"
+        )
+
+        chain = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Logical Engine. You think in straight, unbreakable lines of cause and effect.",
+            max_tokens=800,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model"),
+            stop_check_fn=self.decider.stop_check
+        )
+
+        self.decider.log(f"🧠 Linear Reasoning Complete.")
+        return chain
+
+    def _perform_dialectical(self, topic: str, context: str) -> str:
+        """Dialectical debate (Thesis-Antithesis-Synthesis)."""
+        if self.decider.dialectics:
+            result = self.decider.dialectics.run_debate(topic, context=context, reasoning_store=self.decider.reasoning_store)
+            return result
+        else:
+            self.decider.log("⚠️ Dialectics component missing. Fallback to Linear.")
+            return self._perform_linear_chain(topic, context)
+
+    def _perform_first_principles(self, topic: str, context: str) -> str:
+        """First Principles decomposition."""
+
+        # Step 1: Deconstruct
+        deconstruct_prompt = (
+            f"{context}\n"
+            "TASK: Deconstruct this topic into its most fundamental truths or axioms.\n"
+            "Discard all assumptions, analogies, and social conventions.\n"
+            "List ONLY the undeniable facts."
+        )
+        axioms = run_local_lm(
+            messages=[{"role": "user", "content": deconstruct_prompt}],
+            system_prompt="You are a First Principles Thinker. You strip away the noise to find the signal.",
+            max_tokens=400,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model")
+        )
+
+        self.decider.log(f"🧠 Axioms found: {axioms[:100]}...")
+
+        # Step 2: Reconstruct
+        reconstruct_prompt = (
+            f"AXIOMS:\n{axioms}\n\n"
+            f"ORIGINAL TOPIC: {topic}\n"
+            "TASK: Rebuild a solution or understanding from these axioms alone.\n"
+            "Do not use external assumptions.\n"
+            "Derive the conclusion logically."
+        )
+
+        conclusion = run_local_lm(
+            messages=[{"role": "user", "content": reconstruct_prompt}],
+            system_prompt="You are a First Principles Thinker. You build solid structures from bedrock truth.",
+            max_tokens=600,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model")
+        )
+
+        full_text = f"AXIOMS:\n{axioms}\n\nRECONSTRUCTION:\n{conclusion}"
+        return full_text
+
+    def _perform_tree_of_thoughts(self, topic: str, context: str, max_depth: int = 10, beam_width: int = 3) -> str:
+        """Execute a Tree of Thoughts (ToT) reasoning process."""
+        # Tree State: List of paths. A path is a list of thought strings.
+        # Start with one empty path
+        active_paths = [[]]
+        final_conclusion = None
+        best_path = []
+
+        for depth in range(1, max_depth + 1):
+            if self.decider.stop_check():
+                break
+
+            if final_conclusion:
+                break
+
+            self.decider.log(f"🌳 Depth {depth}: Expanding {len(active_paths)} paths...")
+
+            # Expansion Phase (Branching & Evaluation)
+            candidates, found_conclusion, found_path = self._expand_thought_paths(active_paths, context, beam_width, topic)
+
+            if found_conclusion:
+                final_conclusion = found_conclusion
+                best_path = found_path
+                break
+
+            # Selection Phase (Beam Search)
+            active_paths = self._select_best_paths(candidates, beam_width, depth, topic)
+            if active_paths:
+                # Update best path to the current best just in case we stop prematurely
+                best_path = active_paths[0]
+
+        if not final_conclusion and active_paths:
+            # If max depth reached without conclusion, take the best path
+            best_path = active_paths[0]
+            final_conclusion = "Max depth reached. Best partial reasoning path selected."
+
+        # Return the best path as the trace
+        trace = "\n".join([f"Depth {i+1}: {step}" for i, step in enumerate(best_path)])
+        if final_conclusion:
+             trace += f"\n\nCONCLUSION REACHED: {final_conclusion}"
+
+        return trace
+
     def _expand_thought_paths(self, active_paths: List[List[str]], static_context: str, beam_width: int, topic: str):
         """Helper to expand current thought paths using LLM."""
         candidates = []
@@ -285,7 +324,7 @@ class ThoughtGenerator:
 
             response = run_local_lm(
                 messages=[{"role": "user", "content": prompt}],
-                system_prompt="You are a Generator.",
+                system_prompt="You are a Generator. You explore possibilities.",
                 temperature=0.7,
                 max_tokens=400,
                 base_url=settings.get("base_url"),
@@ -308,26 +347,43 @@ class ThoughtGenerator:
                     break
 
                 # Score the step
+                # Improved Scoring Prompt
                 eval_prompt = (
                     f"Evaluate this reasoning step for the topic '{topic}':\n"
                     f"Step: \"{step}\"\n"
                     "Criteria: Logic, Relevance, Novelty.\n"
-                    "Output a score from 0.0 to 1.0."
+                    "Output valid JSON: {\"score\": 0.0 to 1.0, \"reason\": \"short reason\"}"
                 )
 
                 score_str = run_local_lm(
                     messages=[{"role": "user", "content": eval_prompt}],
-                    system_prompt="You are an Evaluator.",
+                    system_prompt="You are an Evaluator. You judge the quality of thoughts.",
                     temperature=0.1,
-                    max_tokens=10,
+                    max_tokens=100,
                     base_url=settings.get("base_url"),
                     chat_model=settings.get("chat_model")
                 )
 
                 try:
-                    score = float(re.search(r"0\.\d+|1\.0|0|1", score_str).group())
+                    # Attempt to parse JSON
+                    # Use utility or simple json load
+                    # First try strict JSON
+                    data = {}
+                    try:
+                        data = json.loads(score_str)
+                    except:
+                        # Try to extract JSON from markdown
+                        match = re.search(r"\{.*\}", score_str, re.DOTALL)
+                        if match:
+                            data = json.loads(match.group(0))
+
+                    score = float(data.get("score", 0.5))
                 except:
-                    score = 0.5
+                    # Fallback to regex if JSON fails
+                    try:
+                        score = float(re.search(r"0\.\d+|1\.0|0|1", score_str).group())
+                    except:
+                        score = 0.5
 
                 candidates.append((path + [step], score))
 
@@ -348,39 +404,7 @@ class ThoughtGenerator:
             if self.decider.chat_fn:
                 self.decider.chat_fn("Decider", f"🌳 Depth {depth}: {best_step}")
 
-            # Store in reasoning
-            self.decider.reasoning_store.add(content=f"ToT Depth {depth} ({topic}): {best_step}", source="decider_tot", confidence=1.0)
-
         return active_paths
-
-    def _summarize_thinking_chain(self, topic: str, best_path: List[str]) -> str:
-        """Helper to summarize the reasoning chain."""
-        self.decider.log(f"🧠 Generating summary of Tree of Thoughts...")
-        settings = self.decider.get_settings()
-        full_chain_text = "\n".join(best_path)
-        summary_prompt = (
-            f"Synthesize the following reasoning path regarding '{topic}' into a clear, comprehensive summary for the user.\n"
-            f"Include key insights and the final conclusion if reached.\n\n"
-            f"Reasoning Path:\n{full_chain_text}"
-        )
-
-        summary = run_local_lm(
-            messages=[{"role": "user", "content": summary_prompt}],
-            system_prompt="You are a helpful assistant summarizing your internal reasoning.",
-            temperature=0.5,
-            max_tokens=500,
-            base_url=settings.get("base_url"),
-            chat_model=settings.get("chat_model"),
-            stop_check_fn=self.decider.stop_check
-        )
-
-        if self.decider.chat_fn:
-            self.decider.chat_fn("Decider", f"🌳 Tree of Thoughts Summary:\n{summary}")
-
-        # Metacognitive Reflection on the thinking process
-        self.decider.decision_maker._reflect_on_decision(f"Tree of Thoughts on {topic}", summary)
-
-        return summary
 
     def perform_self_reflection(self):
         """
@@ -408,7 +432,7 @@ class ThoughtGenerator:
 
         reflection = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Self-Aware AI.",
+            system_prompt="You are a Self-Aware AI. You are honest with yourself.",
             max_tokens=300,
             base_url=self.decider.get_settings().get("base_url"),
             chat_model=self.decider.get_settings().get("chat_model")
