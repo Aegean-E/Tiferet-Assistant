@@ -254,6 +254,12 @@ class ActionManager:
 
         content, filepath = self.core.internet_bridge.search(query, source)
         content = content or ""
+
+        # New: Ingest External Knowledge from Web Text
+        if content and not filepath and self.core.daat:
+            # Run in background to avoid blocking
+            self.core.thread_pool.submit(self.core.daat.ingest_external_knowledge, content, f"Web Search: {query}")
+
         if filepath:
             try:
                 # Check file size before processing (limit to 10MB)
@@ -269,6 +275,11 @@ class ActionManager:
                             try:
                                 chunks, page_count, file_type = self.core.document_processor.process_document(filepath)
                                 self.core.document_store.add_document(file_hash=file_hash, filename=os.path.basename(filepath), file_type=file_type, file_size=os.path.getsize(filepath), page_count=page_count, chunks=chunks, upload_source="safe_search")
+
+                                # New: Summarize and Index Document via Daat
+                                if self.core.daat:
+                                    self.core.daat.summarize_and_index_document(file_hash, os.path.basename(filepath))
+
                                 if self.core.ui_refresh_callback:
                                     self.core.ui_refresh_callback('docs')
                                 self.core.log(f"✅ Background Ingestion complete: {os.path.basename(filepath)}")

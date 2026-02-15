@@ -259,7 +259,8 @@ class DocumentProcessor:
         # Un-wrap lines: Replace single newlines with space, keep double newlines for paragraphs.
         # Look for newline NOT preceded by newline AND NOT followed by newline.
         # This joins sentences split by PDF hard wraps.
-        text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+        # Improved: Don't unwrap if next line looks like a list item.
+        text = re.sub(r'(?<!\n)\n(?!\n)(?!\s*([-*•]|\d+\.))', ' ', text)
 
         # Remove multiple newlines
         text = re.sub(r'\n{3,}', '\n\n', text)
