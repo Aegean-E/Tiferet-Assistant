@@ -40,6 +40,7 @@ class AutonomyManager:
             "deep_planning", "strategy_refinement",
             "autonomous_think", # Autonomous Reasoning
             "manage_goals", # Goal Autonomy
+            "analyze_process", # Active Process Analysis
             # Capability Improvement Actions (Meta-Strategic)
             "improve_reasoning", "optimize_memory", "refine_tools"
         ]
@@ -85,6 +86,10 @@ class AutonomyManager:
             default_weights["manage_goals"]["bias"] = 0.2
             default_weights["manage_goals"]["goal_pressure"] = -0.8 # Trigger when goal pressure is LOW
             default_weights["manage_goals"]["boredom"] = 0.6
+            # New Action: Analyze Process
+            default_weights["analyze_process"]["bias"] = 0.1
+            default_weights["analyze_process"]["confusion"] = 0.8
+            default_weights["analyze_process"]["reasoning_error_rate"] = 0.7
         
         self.weights = saved_state.get("weights", default_weights)
 
@@ -255,7 +260,7 @@ class AutonomyManager:
             
         # Future Simulation (Model-Based RL step)
         # Optimization: Fast path for low-risk actions or if simulation is skipped
-        if best_action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity"]:
+        if best_action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity", "analyze_process"]:
             self._finalize_autonomy_step(best_action, score, start_utility, features, current_state, {"allowed": True})
             return
 
@@ -372,6 +377,12 @@ class AutonomyManager:
             self.core.log(f"📄 Autonomy Triggered Read Doc: {args}")
             if "read_document" in self.core.decider.actions:
                  self.core.decider.actions["read_document"](args)
+            executed = True
+
+        # 6. [ANALYZE_PROCESS]
+        if "[ANALYZE_PROCESS]" in response:
+            self.core.log("🔍 Autonomy Triggered Process Analysis")
+            self.core.decider.thought_generator.perform_process_analysis()
             executed = True
 
         return executed
@@ -495,6 +506,9 @@ class AutonomyManager:
         
         elif action_name == "introspection":
              self.core.thread_pool.submit(async_feedback_wrapper, self.core.daat.scan_for_contradictions)
+
+        elif action_name == "analyze_process":
+             self.core.thread_pool.submit(async_feedback_wrapper, self.core.decider.thought_generator.perform_process_analysis)
         
         elif action_name == "self_correction":
              self.core.thread_pool.submit(async_feedback_wrapper, self.core.meta_learner.analyze_failures)
@@ -777,7 +791,7 @@ class AutonomyManager:
         Checks alignment with Core Values and assesses risk.
         """
         # Optimization: Skip expensive simulation for low-risk actions
-        if action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity"]:
+        if action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity", "analyze_process"]:
             return {"allowed": True, "risk_score": 0.0, "reason": "Low-risk internal action"}
 
         if not self.core.self_model: return {"allowed": True, "risk_score": 0.0, "reason": "No self-model"}

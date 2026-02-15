@@ -1,6 +1,7 @@
 import time
 import os
 import difflib
+from collections import deque
 from typing import Dict, Any, List, Optional
 from .lm import run_local_lm
 
@@ -14,6 +15,7 @@ class GlobalWorkspace:
     def __init__(self, core):
         self.core = core
         self.working_memory: List[Dict[str, Any]] = [] # List of active items
+        self.process_history = deque(maxlen=50) # Trace of recent events for process analysis
         self.capacity = 7 # The magical number 7 +/- 2
         self.last_update = time.time()
         self.update_interval = 2.0 # Faster update cycle for fluidity
@@ -74,6 +76,14 @@ class GlobalWorkspace:
         If item exists (by content), update its salience.
         """
         if not content: return
+
+        # Add to Process Trace
+        self.process_history.append({
+            "timestamp": time.time(),
+            "source": source,
+            "content": content,
+            "metadata": metadata or {}
+        })
 
         # Normalize content
         content_key = content.strip().lower()
@@ -137,6 +147,21 @@ class GlobalWorkspace:
         self.working_memory.sort(key=lambda x: x["salience"], reverse=True)
         if len(self.working_memory) > self.capacity:
             self.working_memory = self.working_memory[:self.capacity]
+
+    def get_process_trace(self, limit: int = 20) -> str:
+        """
+        Return a formatted string of the recent process history.
+        Used for Metacognition and Analysis.
+        """
+        trace_parts = []
+        # Get last N items
+        items = list(self.process_history)[-limit:]
+
+        for item in items:
+            t_str = time.strftime("%H:%M:%S", time.localtime(item["timestamp"]))
+            trace_parts.append(f"[{t_str}] [{item['source']}] {item['content']}")
+
+        return "\n".join(trace_parts)
 
     def get_context(self) -> str:
         """

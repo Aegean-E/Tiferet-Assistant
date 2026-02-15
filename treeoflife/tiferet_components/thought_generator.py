@@ -454,3 +454,65 @@ class ThoughtGenerator:
 
         # Metacognitive Reflection on the reflection
         self.decider.decision_maker._reflect_on_decision("Deep Self-Reflection", reflection)
+
+    def perform_process_analysis(self):
+        """
+        Analyze the current autonomous process trace for bottlenecks, loops, or success.
+        """
+        self.decider.log("🔍 Decider: Running Process Analysis...")
+
+        # 1. Get Process Trace
+        if not hasattr(self.decider, 'global_workspace') or not self.decider.global_workspace:
+            self.decider.log("⚠️ No Global Workspace available.")
+            return
+
+        trace = self.decider.global_workspace.get_process_trace(limit=20)
+        if not trace:
+            self.decider.log("⚠️ Process trace is empty.")
+            return
+
+        # 2. Analyze via LLM
+        prompt = (
+            f"PROCESS TRACE:\n{trace}\n\n"
+            "TASK: Analyze this execution trace.\n"
+            "1. Identify the Current Objective (What is the system trying to do?).\n"
+            "2. Evaluate Progress (Stuck? Looping? Making progress?).\n"
+            "3. Identify any Errors or Bottlenecks.\n"
+            "4. Suggest the Next Best Action.\n"
+            "Output JSON: {\"objective\": \"...\", \"status\": \"FLOW/STUCK/LOOP\", \"bottleneck\": \"...\", \"suggestion\": \"...\"}"
+        )
+
+        settings = self.decider.get_settings()
+        response = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Process Analyst.",
+            max_tokens=300,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+
+        try:
+            data = {}
+            # Robust JSON extraction
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+
+            if data:
+                status = data.get('status', 'UNKNOWN')
+                suggestion = data.get('suggestion', 'None')
+                self.decider.log(f"🔍 Analysis: {status} - {suggestion}")
+
+                # Store analysis
+                content = f"Process Analysis [{status}]: {suggestion}"
+                self.decider.reasoning_store.add(content=content, source="process_analysis", confidence=1.0)
+
+                # Publish Event
+                if self.decider.event_bus:
+                    self.decider.event_bus.publish("PROCESS_ANALYSIS", data, source="ThoughtGenerator", priority=9)
+
+                # Integrate into Consciousness
+                self.decider.global_workspace.integrate(content, "ProcessAnalyzer", 1.0)
+
+        except Exception as e:
+            self.decider.log(f"⚠️ Process Analysis failed: {e}")
