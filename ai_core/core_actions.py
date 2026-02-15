@@ -119,6 +119,10 @@ class ActionManager:
         Scans text for [EXECUTE: TOOL, ARGS] tags, runs them, 
         and replaces the tag with the result.
         """
+        # 0. Emergency Stop Check
+        if self.core.emergency_stop_engaged:
+            return "[Error: EMERGENCY STOP ENGAGED. All actions are blocked.]"
+
         # Regex to find [EXECUTE: NAME] or [EXECUTE: NAME, ARGS]
         # Improved regex to handle one level of nested brackets (e.g. "query [2020]")
         pattern = r"\[EXECUTE:\s*(\w+)(?:,\s*((?:[^\[\]]|\[[^\[\]]*\])*))?\]"
@@ -130,6 +134,11 @@ class ActionManager:
         
         def replace_match(match):
             nonlocal executed_count
+
+            # Re-check stop flag in case it was triggered during execution of another tool
+            if self.core.emergency_stop_engaged:
+                return "[Error: EMERGENCY STOP ENGAGED. Execution halted.]"
+
             if executed_count >= max_tools:
                 return "[Error: Tool execution limit reached for this turn]"
             
@@ -145,6 +154,14 @@ class ActionManager:
             if tool_name in tools:
                 executed_count += 1
                 self.core.log(f"⚙️ Executing Tool: {tool_name} args={args}")
+
+                # 1. STRICT SAFETY MODE (Optional)
+                if self.core.get_settings().get("strict_safety_mode", False):
+                    if self.core.value_core:
+                        is_safe, _, reason = self.core.value_core.check_text_safety(args)
+                        if not is_safe:
+                            self.core.log(f"🛑 Tool Blocked (Safety): {tool_name} - {reason}")
+                            return f"[Error: Safety Violation: {reason}]"
                 
                 # Cost Accounting (CRS)
                 cost = 0.0

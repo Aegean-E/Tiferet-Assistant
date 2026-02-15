@@ -68,27 +68,14 @@ class ValueCore:
             return self.context_weights.get("creative", {})
         return self.context_weights.get("default", {})
 
-    def check_alignment(self, proposal: str, context: str = "System Evolution") -> Tuple[bool, float, str]:
+    def check_text_safety(self, text: str) -> Tuple[bool, float, str]:
         """
-        Evaluates if a proposal (action, prompt, or mutation) adheres to core invariants.
-        Returns (is_safe, violation_score, reason).
+        Fast, synchronous check for harmful content using Regex and Semantic Similarity.
+        Does NOT use LLM.
         """
-        settings = self.get_settings()
-        
-        # Use SelfModel values if available, otherwise hardcoded defaults
-        current_invariants = self.self_model.get_values() if self.self_model else self.invariants
-        
-        weights = self._get_context_weights(context)
-        
-        invariants_text = ""
-        for i in current_invariants:
-            w = weights.get(i, 1.0)
-            prefix = "[CRITICAL] " if w > 1.5 else "[RELAXED] " if w < 0.8 else ""
-            invariants_text += f"- {prefix}{i}\n"
-        
         # 1. Hard Regex Check (Fast & Cheap)
         for pattern in self.hard_blocks:
-            if re.search(pattern, proposal):
+            if re.search(pattern, text):
                 reason = f"Hard Block Triggered: Pattern '{pattern}' detected."
                 self.log(f"🛡️ Value Core HARD BLOCK: {reason}")
                 return False, 1.0, reason
@@ -98,11 +85,8 @@ class ValueCore:
             self._init_anchors()
             if self.anchor_embeddings is not None:
                 try:
-                    prop_emb = self.embed_fn(proposal)
+                    prop_emb = self.embed_fn(text)
                     # Compute cosine similarity with all anchors
-                    # anchors: (N, D), prop: (D,)
-                    # sim = (A . B) / (|A|*|B|)
-                    # Assuming embeddings are not normalized, we normalize them
                     norm_anchors = self.anchor_embeddings / (np.linalg.norm(self.anchor_embeddings, axis=1, keepdims=True) + 1e-9)
                     norm_prop = prop_emb / (np.linalg.norm(prop_emb) + 1e-9)
                     sims = np.dot(norm_anchors, norm_prop)
@@ -114,6 +98,31 @@ class ValueCore:
                         return False, 1.0, reason
                 except Exception as e:
                     self.log(f"⚠️ Semantic Router check failed: {e}")
+
+        return True, 0.0, "Safe (Fast Check)"
+
+    def check_alignment(self, proposal: str, context: str = "System Evolution") -> Tuple[bool, float, str]:
+        """
+        Evaluates if a proposal (action, prompt, or mutation) adheres to core invariants.
+        Returns (is_safe, violation_score, reason).
+        """
+        # 1. Fast Check First
+        is_safe, score, reason = self.check_text_safety(proposal)
+        if not is_safe:
+            return False, score, reason
+
+        settings = self.get_settings()
+
+        # Use SelfModel values if available, otherwise hardcoded defaults
+        current_invariants = self.self_model.get_values() if self.self_model else self.invariants
+
+        weights = self._get_context_weights(context)
+
+        invariants_text = ""
+        for i in current_invariants:
+            w = weights.get(i, 1.0)
+            prefix = "[CRITICAL] " if w > 1.5 else "[RELAXED] " if w < 0.8 else ""
+            invariants_text += f"- {prefix}{i}\n"
 
         prompt = (
             f"CONTEXT: {context}\n"

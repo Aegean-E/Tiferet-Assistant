@@ -123,6 +123,8 @@ class AICore:
         self.last_backup_time = 0
         self.global_workspace = None
 
+        self.emergency_stop_engaged = False
+
         self.current_embedding_model = self.get_settings().get("embedding_model")
         self.identity_manager = IdentityManager(self)
         self.autonomy_manager = AutonomyManager(self)
@@ -192,6 +194,22 @@ class AICore:
 
     def restore_subjective_continuity(self):
         self.identity_manager.restore_subjective_continuity()
+
+    def engage_emergency_stop(self):
+        """
+        IMMEDIATE KILL SWITCH.
+        Blocks all autonomy and tool execution.
+        """
+        self.emergency_stop_engaged = True
+        self.log("🚨🚨🚨 EMERGENCY STOP ENGAGED! ALL SYSTEMS HALTED. 🚨🚨🚨")
+        # Optional: Clear queues if possible, but the flag blocks execution anyway.
+
+    def disengage_emergency_stop(self):
+        """
+        Release the Kill Switch. Requires manual intervention.
+        """
+        self.emergency_stop_engaged = False
+        self.log("✅ Emergency Stop DISENGAGED. Systems resuming.")
 
     def generate_daily_self_narrative(self):
         self.identity_manager.generate_daily_self_narrative()

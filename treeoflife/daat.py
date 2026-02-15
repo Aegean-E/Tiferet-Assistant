@@ -9,8 +9,12 @@ from ai_core.lm import run_local_lm, compute_embedding
 from ai_core.utils import parse_json_array_loose, parse_json_object_loose
 
 try:
-    import faiss
     import numpy as np
+except ImportError:
+    np = None
+
+try:
+    import faiss
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False

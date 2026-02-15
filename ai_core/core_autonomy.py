@@ -108,6 +108,9 @@ class AutonomyManager:
         Check if the system is bored and trigger autonomous agency (Study or Research).
         Called from the main application loop.
         """
+        if self.core.emergency_stop_engaged:
+            return
+
         # --- AUTONOMOUS AGENCY TRIGGER ---
         drives = self.core.self_model.get_drives()
         
@@ -735,7 +738,8 @@ class AutonomyManager:
         except Exception as e:
             self.core.log(f"⚠️ Simulation failed: {e}")
         
-        return {"allowed": True, "reason": "Simulation failed (Fail Open)"} # Fail open to prevent paralysis
+        # FAIL SAFE: If simulation fails or output is invalid, BLOCK the action.
+        return {"allowed": False, "reason": "Simulation failed (Fail-Safe)"}
 
     def generate_goals_from_conflict(self):
         """
