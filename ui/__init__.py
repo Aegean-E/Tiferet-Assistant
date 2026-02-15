@@ -7,6 +7,14 @@ import tkinter as tk
 import logging
 from tkinter import scrolledtext
 import ttkbootstrap as ttk
+try:
+    from ttkbootstrap.widgets import ToolTip
+except ImportError:
+    try:
+        from ttkbootstrap.tooltip import ToolTip
+    except ImportError:
+        ToolTip = None
+
 import sys
 import os
 from datetime import datetime
@@ -238,10 +246,12 @@ class DesktopAssistantUI(DocumentsUI, SettingsUI, MemoryDatabaseUI, GraphUI):
         # Image button
         image_btn = ttk.Button(input_frame, text="📷", command=self.send_image, style="Big.Link.TButton")
         image_btn.pack(side=tk.LEFT, padx=(0, 2))
+        if ToolTip: ToolTip(image_btn, text="Send an image to the Assistant")
 
         # Voice button
         self.voice_btn = ttk.Button(input_frame, text="🎤", command=self.toggle_recording, style="Big.Link.TButton")
         self.voice_btn.pack(side=tk.LEFT, padx=(0, 2))
+        if ToolTip: ToolTip(self.voice_btn, text="Record a voice message")
 
         # Message entry
         self.message_entry = ttk.Entry(input_frame, font=entry_font)
@@ -254,6 +264,7 @@ class DesktopAssistantUI(DocumentsUI, SettingsUI, MemoryDatabaseUI, GraphUI):
         # Stop button (STOP ALL)
         stop_button = ttk.Button(input_frame, text="Stop", command=self.stop_processing, bootstyle="danger")
         stop_button.pack(side=tk.RIGHT)
+        if ToolTip: ToolTip(stop_button, text="Stop current generation")
 
         # Show Thoughts Toggle
         self.show_thoughts_var = tk.BooleanVar(value=True)
@@ -265,10 +276,12 @@ class DesktopAssistantUI(DocumentsUI, SettingsUI, MemoryDatabaseUI, GraphUI):
             command=self.toggle_thoughts_view
         )
         self.thoughts_btn.pack(side=tk.RIGHT, padx=(0, 5))
+        if ToolTip: ToolTip(self.thoughts_btn, text="Show/Hide internal thought process")
 
         # Connect/Disconnect button (CONNECT)
         self.connect_button = ttk.Button(input_frame, text="Connect", command=self.toggle_connection)
         self.connect_button.pack(side=tk.RIGHT, padx=(0, 5))
+        if ToolTip: ToolTip(self.connect_button, text="Connect/Disconnect Telegram")
 
         # Send button (SEND)
         self.send_button = ttk.Button(input_frame, text="Send", command=self.send_message)
