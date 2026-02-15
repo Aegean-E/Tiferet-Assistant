@@ -15,6 +15,7 @@ from functools import lru_cache
 from collections import OrderedDict
 import sqlite3
 from ai_core.utils import parse_json_array_loose, parse_json_object_loose
+from ai_core.memory_filter import MemoryQualityFilter
 from docs.default_prompts import DEFAULT_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT_TEXT, DEFAULT_MEMORY_EXTRACTOR_PROMPT as DEFAULT_MEMORY_EXTRACTOR_PROMPT_TEXT
 
 try:
@@ -632,6 +633,8 @@ def extract_memories_llm(
 # Backward-compatible wrapper
 # ==============================
 
+_MEMORY_FILTER = MemoryQualityFilter()
+
 def _is_low_quality_candidate(text: str, mem_type: str = None) -> bool:
     """
     Filter out low-quality memory candidates:
@@ -640,104 +643,10 @@ def _is_low_quality_candidate(text: str, mem_type: str = None) -> bool:
     - Very short utterances (< 5 words) - BUT NOT for IDENTITY type
     - Filler phrases
     - Generic assistant goals (help, assist, support)
+
+    Delegates to MemoryQualityFilter strategy.
     """
-    text_lower = text.lower().strip()
-
-    # Questions
-    if text_lower.endswith("?"):
-        return True
-
-    # System Errors / URLs
-    error_patterns = [
-        "client error", "bad request", "local model error",
-        "encountered an error", "400 client error", "500 server error",
-        "generation failed", "context length"
-    ]
-    if any(p in text_lower for p in error_patterns):
-        return True
-
-    # Pure greeting words ONLY (not "Hi, my name is...")
-    # Only reject if it's JUST a greeting with no additional info
-    pure_greetings = {"hi", "hello", "hey", "greetings", "welcome", "howdy", "nice to meet you"}
-    if text_lower in pure_greetings or text_lower.split()[0] in pure_greetings and len(text_lower.split()) == 1:
-        # Only reject if it's a single greeting word
-        return True
-
-    # Too short (< 5 words) - likely filler
-    # BUT: IDENTITY, PERMISSION, RULE, GOAL, BELIEF claims are allowed to be short
-    word_count = len(text_lower.split())
-    protected_types = {"IDENTITY", "PERMISSION", "RULE", "GOAL", "BELIEF", "PREFERENCE", "REFUTED_BELIEF"}
-
-    # Allow FACT if it contains "name is" or other identity markers (prevents filtering "My name is X")
-    is_identity_fact = "name is" in text_lower or "lives in" in text_lower or "works at" in text_lower or "i am" in text_lower or "user is" in text_lower
-
-    if word_count < 3 and mem_type and mem_type.upper() not in protected_types and not is_identity_fact:
-        return True
-
-    # Filler phrases
-    filler_phrases = {
-        "what brings you here",
-        "how can i help",
-        "how are you",
-        "what would you like",
-        "can i assist",
-        "is there anything",
-    }
-    if any(phrase in text_lower for phrase in filler_phrases):
-        return True
-
-    # Filter out common document artifacts
-    artifacts = ["all rights reserved", "copyright", "page", "login", "sign up", "menu", "search"]
-    if any(a in text_lower for a in artifacts) and len(text_lower) < 30:
-        return True
-
-    # GOAL-specific filters: Block generic "help/assist" goals
-    if mem_type and mem_type.upper() == "GOAL":
-        # Generic assistant goals patterns
-        generic_goal_patterns = [
-            "goal is to help",
-            "goal is to assist",
-            "goal is to support",
-            "here to help",
-            "here to assist",
-            "help with a variety",
-            "help with any",
-            "assist with any",
-            "available to help",
-        ]
-
-        # If text contains these patterns, it's likely generic politeness
-        if any(pattern in text_lower for pattern in generic_goal_patterns):
-            return True
-
-        # Additional check: If goal contains "help" + current conversation topic
-        # Example: "help with academic resources and professional development at Van..."
-        # This is contextual, not a true self-chosen goal
-        if "help with" in text_lower or "assist with" in text_lower:
-            # Count specific nouns (indicates context-specific goal)
-            specific_keywords = ["academic", "professional", "university", "medical", "research",
-                                 "study", "studies", "work", "question", "topic", "information"]
-            if any(keyword in text_lower for keyword in specific_keywords):
-                return True
-
-        # Filter out passive research recommendations from documents (often misclassified as GOALs)
-        # e.g. "Future investigations should focus on...", "Further research is needed..."
-        passive_research_patterns = [
-            "future investigation", "future research", "further research",
-            "further investigation", "further studies", "additional studies",
-            "comprehensive education", "therapeutic approaches need",
-            "there is a need", "this finding may offer", "needs to be", "should focus on"
-        ]
-        # Only filter if it doesn't explicitly mention the assistant/I doing it
-        if any(text_lower.startswith(p) for p in
-               passive_research_patterns) and "assistant" not in text_lower and " i " not in text_lower:
-            return True
-
-        # Catch "The goal is to..." when it refers to a study's goal, not the assistant's
-        if text_lower.startswith("the goal is to") and "assistant" not in text_lower:
-            return True
-
-    return False
+    return _MEMORY_FILTER.is_low_quality(text, mem_type)
 
 
 def extract_memory_candidates(
