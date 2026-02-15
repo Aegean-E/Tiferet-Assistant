@@ -63,14 +63,14 @@ class TestDeciderProcessChat(unittest.TestCase):
 
     @patch('treeoflife.tiferet.compute_embedding')
     @patch('treeoflife.tiferet.run_local_lm')
-    @patch('treeoflife.tiferet.extract_memory_candidates')
+    @patch('treeoflife.tiferet.extract_memories_llm')
     @patch('treeoflife.tiferet.count_tokens')
     def test_process_chat_message_flow(self, mock_count, mock_extract, mock_llm, mock_embedding):
         # Setup mocks
         mock_embedding.return_value = [0.1] * 768
         mock_llm.return_value = "This is a response."
         mock_count.return_value = 10
-        mock_extract.return_value = []
+        mock_extract.return_value = ([], [])
 
         user_text = "Hello, world!"
         history = [{"role": "user", "content": "Hi"}]
@@ -87,14 +87,14 @@ class TestDeciderProcessChat(unittest.TestCase):
 
     @patch('treeoflife.tiferet.compute_embedding')
     @patch('treeoflife.tiferet.run_local_lm')
-    @patch('treeoflife.tiferet.extract_memory_candidates')
+    @patch('treeoflife.tiferet.extract_memories_llm')
     @patch('treeoflife.tiferet.count_tokens')
     def test_process_chat_message_with_rag(self, mock_count, mock_extract, mock_llm, mock_embedding):
         # Setup mocks
         mock_embedding.return_value = [0.1] * 768
         mock_llm.return_value = "Here is the document info."
         mock_count.return_value = 10
-        mock_extract.return_value = []
+        mock_extract.return_value = ([], [])
 
         user_text = "Summarize the document file.pdf" # Triggers RAG
         history = []
