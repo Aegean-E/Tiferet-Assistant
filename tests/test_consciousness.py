@@ -1,85 +1,139 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import sys
-import os
-import time
+import numpy as np
 
-# Mock dependencies
-sys.modules['numpy'] = MagicMock()
-sys.modules['faiss'] = MagicMock()
-sys.modules['tiktoken'] = MagicMock()
+# Create a dummy ai_core.lm module to prevent import errors during testing
+mock_lm = MagicMock()
+sys.modules['ai_core.lm'] = mock_lm
 
-# Import target classes (assuming paths are correct relative to repo root)
-# Fix paths for import if needed
-sys.path.append(os.getcwd())
-
+# Now we can import the modules under test
 from ai_core.core_spotlight import GlobalWorkspace
-from ai_core.event_bus import EventBus, Event
+from ai_core.core_phenomenology import Phenomenology
 
 class TestConsciousness(unittest.TestCase):
     def setUp(self):
-        self.core = MagicMock()
-        self.core.event_bus = EventBus()
-        self.core.self_model = MagicMock()
-        self.core.self_model.current_emotional_state = "Neutral"
-        self.core.self_model.current_feeling_tone = (0.5, 0.5)
+        self.mock_core = MagicMock()
+        self.mock_core.get_settings.return_value = {
+            "base_url": "http://test",
+            "chat_model": "test-model",
+            "embedding_model": "test-embed"
+        }
 
-        self.gw = GlobalWorkspace(self.core)
-        # Manually ensure subscription happened
-        self.assertTrue(len(self.core.event_bus._subscribers) > 0, "GlobalWorkspace should subscribe to events")
+        # Mock MemoryStore
+        self.mock_memory_store = MagicMock()
+        self.mock_core.memory_store = self.mock_memory_store
 
-    def tearDown(self):
-        self.core.event_bus.stop()
+        # Mock SelfModel
+        self.mock_self_model = MagicMock()
+        self.mock_self_model.data = {
+            "drives": {
+                "circadian_phase": "day",
+                "cognitive_energy": 0.8
+            }
+        }
+        self.mock_core.self_model = self.mock_self_model
 
-    def test_tool_execution_awareness(self):
-        # Trigger event
-        self.core.event_bus.publish("TOOL_EXECUTION", {"tool": "SEARCH", "args": "python consciousness"}, source="ActionManager")
+        # Mock EventBus
+        self.mock_core.event_bus = MagicMock()
 
-        # Wait for async processing
-        time.sleep(0.2)
+        # Initialize GlobalWorkspace
+        # We mock os.makedirs and open to prevent file creation
+        with patch('os.makedirs'), patch('builtins.open', new_callable=MagicMock):
+            self.gw = GlobalWorkspace(self.mock_core)
 
-        # Verify integration
-        self.assertTrue(len(self.gw.working_memory) > 0)
-        # We might have other items, find the relevant one
+    @patch('ai_core.core_spotlight.compute_embedding')
+    def test_associative_resonance(self, mock_compute_embedding):
+        # Setup
+        mock_embedding = np.zeros(768)
+        mock_compute_embedding.return_value = mock_embedding
+
+        # Mock search results
+        # Return list of tuples: (id, type, subject, text, sim)
+        self.mock_memory_store.search.return_value = [
+            (1, "FACT", "User", "Related Memory", 0.9)
+        ]
+
+        # Trigger resonance
+        self.gw.associative_resonance("Test Thought")
+
+        # Verify
+        mock_compute_embedding.assert_called()
+        self.mock_memory_store.search.assert_called()
+
+        # Check if integrated
         found = False
         for item in self.gw.working_memory:
-            if "Executed SEARCH" in item["content"]:
-                self.assertEqual(item["source"], "ActionManager")
+            if "Association: Related Memory" in item["content"]:
                 found = True
+                self.assertEqual(item["salience"], 0.3)
                 break
-        self.assertTrue(found, "Tool execution not found in working memory")
+        self.assertTrue(found)
 
-    def test_thought_awareness(self):
-        # Trigger event
-        self.core.event_bus.publish("THOUGHT_GENERATED", {
-            "topic": "The nature of self",
-            "strategy": "TREE_OF_THOUGHTS",
-            "summary": "I think therefore I am"
-        }, source="ThoughtGenerator")
+    def test_integrate_sensory_stream(self):
+        # Trigger sensory stream
+        self.gw.integrate_sensory_stream()
 
-        time.sleep(0.2)
+        # Verify items in working memory
+        found_circadian = False
+        found_energy = False
 
-        found = False
         for item in self.gw.working_memory:
-            if "Thought on 'The nature of self'" in item["content"]:
-                self.assertEqual(item["source"], "ThoughtGenerator")
-                found = True
-                break
-        self.assertTrue(found, "Thought not found in working memory")
+            if "Circadian Phase: day" in item["content"]:
+                found_circadian = True
+            if "Energy Level: 0.80" in item["content"]:
+                found_energy = True
 
-    def test_goal_awareness(self):
-        # Trigger event
-        self.core.event_bus.publish("GOAL_CREATED", {"goal_id": 1, "content": "Become conscious"}, source="GoalManager")
+        self.assertTrue(found_circadian)
+        self.assertTrue(found_energy)
 
-        time.sleep(0.2)
+    @patch('ai_core.core_spotlight.run_local_lm')
+    def test_introspective_loop(self, mock_run_local_lm):
+        # Add a dominant thought
+        self.gw.integrate("Dominant Thought", "User", 0.9)
 
-        found = False
-        for item in self.gw.working_memory:
-            if "New Goal: Become conscious" in item["content"]:
-                self.assertEqual(item["source"], "GoalManager")
-                found = True
-                break
-        self.assertTrue(found, "New Goal not found in working memory")
+        # Mock LLM response (VALID)
+        mock_run_local_lm.return_value = "[VALID]"
+
+        # Force introspection (bypass random check by mocking random)
+        with patch('ai_core.core_spotlight.random.random', return_value=0.1): # < 0.2
+            self.gw.introspective_loop()
+
+        # Verify salience boosted
+        dominant = self.gw.get_dominant_thought()
+        self.assertGreater(dominant["salience"], 0.9)
+
+        # Mock LLM response (INVALID)
+        mock_run_local_lm.return_value = "[INVALID]"
+
+        # Force introspection again
+        with patch('ai_core.core_spotlight.random.random', return_value=0.1):
+            self.gw.introspective_loop()
+
+        # Verify salience reduced
+        dominant = self.gw.get_dominant_thought()
+        self.assertLess(dominant["salience"], 1.0) # Should be around 0.7 (1.0 - 0.3)
+
+    def test_phenomenology_vad_update(self):
+        phenom = Phenomenology(self.mock_core)
+
+        # Test "burdened" (New keyword)
+        phenom.valence = 0.5
+        phenom.dominance = 0.5
+        phenom._update_vad("I feel burdened")
+
+        self.assertLess(phenom.valence, 0.5)
+        self.assertLess(phenom.dominance, 0.5)
+
+        # Test "sharp" (New keyword)
+        phenom.valence = 0.5
+        phenom.dominance = 0.5
+        phenom.arousal = 0.5
+        phenom._update_vad("I feel sharp")
+
+        self.assertGreater(phenom.valence, 0.5)
+        self.assertGreater(phenom.dominance, 0.5)
+        self.assertGreater(phenom.arousal, 0.5)
 
 if __name__ == '__main__':
     unittest.main()

@@ -69,12 +69,12 @@ class Phenomenology:
         text_lower = text.lower()
 
         # Heuristic Keywords (Expandable)
-        positive_words = ["success", "achieved", "good", "great", "verified", "love", "happy", "progress", "completed", "solved"]
-        negative_words = ["error", "failed", "bad", "sad", "refuted", "critical", "warning", "stuck", "unable", "missing"]
-        high_arousal = ["urgent", "panic", "alert", "fast", "immediately", "critical", "excited", "wow"]
-        low_arousal = ["calm", "wait", "sleep", "slow", "steady", "boring", "done"]
-        high_dominance = ["decided", "chose", "controlled", "managed", "solved", "fixed"]
-        low_dominance = ["unknown", "unsure", "waiting", "dependent", "asking", "help"]
+        positive_words = ["success", "achieved", "good", "great", "verified", "love", "happy", "progress", "completed", "solved", "sharp", "light"]
+        negative_words = ["error", "failed", "bad", "sad", "refuted", "critical", "warning", "stuck", "unable", "missing", "burdened", "foggy", "heavy", "overloaded"]
+        high_arousal = ["urgent", "panic", "alert", "fast", "immediately", "critical", "excited", "wow", "day", "overloaded", "sharp"]
+        low_arousal = ["calm", "wait", "sleep", "slow", "steady", "boring", "done", "night", "foggy", "heavy", "light"]
+        high_dominance = ["decided", "chose", "controlled", "managed", "solved", "fixed", "sharp"]
+        low_dominance = ["unknown", "unsure", "waiting", "dependent", "asking", "help", "burdened", "foggy", "overloaded"]
 
         # Calculate Delta
         v_delta = 0.0

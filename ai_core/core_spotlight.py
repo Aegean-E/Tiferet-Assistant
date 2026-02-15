@@ -1,8 +1,10 @@
 import time
 import os
 import difflib
+import random
+import numpy as np
 from typing import Dict, Any, List, Optional
-from .lm import run_local_lm
+from .lm import run_local_lm, compute_embedding
 
 class GlobalWorkspace:
     """
@@ -19,6 +21,7 @@ class GlobalWorkspace:
         self.update_interval = 2.0 # Faster update cycle for fluidity
         self.last_broadcast = time.time()
         self.stream_file = "./data/stream_of_consciousness.md"
+        self.cycle_count = 0
 
         # Ensure data dir exists
         try:
@@ -109,6 +112,10 @@ class GlobalWorkspace:
                 "metadata": metadata or {}
             })
 
+            # Subconscious Association (Resonance)
+            if salience > 0.8:
+                self.associative_resonance(content)
+
     def decay(self):
         """
         Apply decay to all items in working memory.
@@ -172,11 +179,17 @@ class GlobalWorkspace:
         # 1. Decay existing items
         self.decay()
         self.last_update = time.time()
+        self.cycle_count += 1
 
         # 2. Poll Competing Signals (Pull-based)
         self._gather_signals()
+        self.integrate_sensory_stream()
 
-        # 3. Broadcast if significant change
+        # 3. Introspection (Every 5 cycles)
+        if self.cycle_count % 5 == 0:
+            self.introspective_loop()
+
+        # 4. Broadcast if significant change
         if self.working_memory:
             top_item = self.working_memory[0]
             # Always broadcast periodically to keep system alive
@@ -291,3 +304,102 @@ class GlobalWorkspace:
             return response
 
         return content
+
+    # ==========================
+    # New Consciousness Functions
+    # ==========================
+
+    def associative_resonance(self, content: str):
+        """
+        Subconscious Association:
+        When a strong thought enters working memory, it triggers related memories.
+        """
+        try:
+            # Only trigger if we have a memory store
+            if not self.core.memory_store: return
+
+            settings = self.core.get_settings()
+            emb = compute_embedding(
+                content,
+                base_url=settings.get("base_url"),
+                embedding_model=settings.get("embedding_model")
+            )
+
+            results = self.core.memory_store.search(emb, limit=2)
+            if results:
+                # results: List of (id, type, subject, text, sim)
+                top = results[0]
+
+                # Avoid self-referential loops (don't associate with exact same content)
+                if top[3].strip().lower() == content.strip().lower():
+                    if len(results) > 1:
+                        top = results[1]
+                    else:
+                        return
+
+                # Add as a "fringe" thought (low salience)
+                self.integrate(
+                    content=f"Association: {top[3]}",
+                    source="AssociativeMemory",
+                    salience=0.3,
+                    metadata={"similarity": top[4]}
+                )
+        except Exception as e:
+            # Subconscious failures should be silent
+            pass
+
+    def integrate_sensory_stream(self):
+        """
+        Inject simulated sensory data (System State, Time, Energy).
+        """
+        if not self.core.self_model: return
+
+        # Access data directly from SelfModel
+        drives = self.core.self_model.data.get("drives", {})
+        phase = drives.get("circadian_phase", "day")
+        energy = drives.get("cognitive_energy", 1.0)
+
+        # Mental Load Simulation
+        load = len(self.working_memory)
+        load_desc = "light"
+        if load > 5: load_desc = "heavy"
+        elif load > 8: load_desc = "overloaded"
+
+        # Inject Sensory Items (Transient - fast decay handled by decay())
+        # We give them moderate salience so they stay in background unless focused on
+        self.integrate(f"Circadian Phase: {phase}", "Sensory", 0.4)
+        self.integrate(f"Energy Level: {energy:.2f}", "Sensory", 0.4)
+        self.integrate(f"Mental Load: {load_desc}", "Sensory", 0.5)
+
+    def introspective_loop(self):
+        """
+        Meta-Cognition: Critique the dominant thought.
+        """
+        dominant = self.get_dominant_thought()
+        if not dominant or dominant["salience"] < 0.6: return
+
+        # Only introspect occasionally (20% chance per check)
+        if random.random() > 0.2: return
+
+        content = dominant["content"]
+        prompt = (
+            f"THOUGHT: {content}\n"
+            "CRITIQUE: Is this thought logical, useful, and grounded in reality? "
+            "If yes, output [VALID]. If no, output [INVALID] and a brief reason.\n"
+        )
+
+        settings = self.core.get_settings()
+        response = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            temperature=0.3,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+
+        if "[VALID]" in response:
+            dominant["salience"] = min(1.0, dominant["salience"] + 0.1)
+            self.core.log(f"✅ Introspection validated: '{content}'")
+        elif "[INVALID]" in response:
+            dominant["salience"] -= 0.3
+            self.core.log(f"❌ Introspection doubted: '{content}' -> {response}")
