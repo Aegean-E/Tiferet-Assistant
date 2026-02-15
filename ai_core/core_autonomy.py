@@ -25,6 +25,7 @@ class AutonomyManager:
         self.action_counts = {}
         self.replay_buffer = deque(maxlen=100) # Store (state, action, reward, next_state, memory_ids)
         self.rl_lock = threading.Lock() # Thread safety for RL updates
+        self.processing_autonomy = False # Lock to prevent flooding
         
         # Load persisted state if available
         saved_state = self.core.self_model.get_autonomy_state() if self.core.self_model else {}
@@ -237,25 +238,66 @@ class AutonomyManager:
         # Threshold check (Policy Gating)
         if score < 0.2: # Lowered slightly to allow learning
             return # Nothing worth doing
+
+        # Prevent Re-entry/Flooding
+        if self.processing_autonomy:
+            return
+        self.processing_autonomy = True
             
         # Future Simulation (Model-Based RL step)
-        # Before executing, simulate the outcome and check alignment with SelfModel
-        simulation_result = self.simulate_future(best_action, features)
-        
-        # Gate action based on simulation (Model-Based Override)
-        if simulation_result and not simulation_result.get("allowed", True):
-            self.core.log(f"🛑 Agency: Action '{best_action}' blocked by simulation: {simulation_result.get('reason')}")
+        # Optimization: Fast path for low-risk actions or if simulation is skipped
+        if best_action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity"]:
+            self._finalize_autonomy_step(best_action, score, start_utility, features, current_state, {"allowed": True})
             return
 
-        # Dreaming (Offline Learning) - Run occasionally when idle/bored
-        if current_state == "boredom" and random.random() < 0.3:
-            self.dream()
-            return
+        # Async Simulation: Offload to thread pool to prevent blocking the main loop
+        if self.core.thread_pool:
+            sim_future = self.core.thread_pool.submit(self.simulate_future, best_action, features)
+            sim_future.add_done_callback(
+                lambda f: self._on_simulation_complete(f, best_action, score, start_utility, features, current_state)
+            )
+        else:
+            # Fallback for synchronous execution if no thread pool (e.g. testing without pool)
+            try:
+                simulation_result = self.simulate_future(best_action, features)
+                self._finalize_autonomy_step(best_action, score, start_utility, features, current_state, simulation_result)
+            except Exception as e:
+                self.core.log(f"⚠️ Agency: Synchronous step failed: {e}")
+                self.processing_autonomy = False
 
-        self.core.log(f"🎯 Agency: Selected '{best_action}' (Score: {score:.2f})")
+    def _on_simulation_complete(self, future, best_action, score, start_utility, features, current_state):
+        """Callback for async simulation."""
+        try:
+            simulation_result = future.result()
+        except Exception as e:
+            self.core.log(f"⚠️ Agency: Simulation failed for '{best_action}': {e}")
+            simulation_result = {"allowed": True, "reason": "Simulation error (Fail Open)"}
         
-        # Unified Execution
-        self.execute_action(best_action, start_utility, features)
+        self._finalize_autonomy_step(best_action, score, start_utility, features, current_state, simulation_result)
+
+    def _finalize_autonomy_step(self, best_action, score, start_utility, features, current_state, simulation_result):
+        """
+        Execute the action after simulation (or skip) checks are done.
+        """
+        try:
+            # Gate action based on simulation (Model-Based Override)
+            if simulation_result and not simulation_result.get("allowed", True):
+                self.core.log(f"🛑 Agency: Action '{best_action}' blocked by simulation: {simulation_result.get('reason')}")
+                return
+
+            # Dreaming (Offline Learning) - Run occasionally when idle/bored
+            if current_state == "boredom" and random.random() < 0.3:
+                self.dream()
+                return
+
+            self.core.log(f"🎯 Agency: Selected '{best_action}' (Score: {score:.2f})")
+
+            # Unified Execution
+            self.execute_action(best_action, start_utility, features)
+        except Exception as e:
+            self.core.log(f"⚠️ Agency: Execution failed: {e}")
+        finally:
+            self.processing_autonomy = False
 
     def execute_action(self, action_name: str, start_utility: float, features: Dict[str, float]):
         """
