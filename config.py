@@ -9,6 +9,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 TEMP_UPLOADS_DIR = os.path.join(DATA_DIR, "temp_uploads")
 UPLOADED_DOCS_DIR = os.path.join(DATA_DIR, "uploaded_docs")
 BACKUPS_DIR = os.path.join(DATA_DIR, "backups")
+LOGS_DIR = os.path.join(DATA_DIR, "logs")
 
 # Files
 TEMP_VOICE_INPUT_FILE = os.path.join(DATA_DIR, "temp_voice_input.wav")
@@ -19,3 +20,4 @@ def ensure_data_directories():
     os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
     os.makedirs(UPLOADED_DOCS_DIR, exist_ok=True)
     os.makedirs(BACKUPS_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, exist_ok=True)

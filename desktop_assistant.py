@@ -6,6 +6,7 @@ A standalone desktop application with integrated chat, document management, and 
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import logging
+import logging.handlers
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 import threading
@@ -113,6 +114,21 @@ class DesktopAssistantApp(DesktopAssistantUI):
         ui_handler = UILogHandler(self)
         ui_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
         self.logger.addHandler(ui_handler)
+
+        # Add File Handler
+        try:
+            log_file = os.path.join(config.LOGS_DIR, "assistant.log")
+            file_handler = logging.handlers.RotatingFileHandler(
+                log_file, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8'
+            )
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            ))
+            self.logger.addHandler(file_handler)
+        except Exception as e:
+            print(f"Failed to setup file logging: {e}")
+
         self.redirect_logging()
 
         # Initialize Brain (Memory & Documents) - Moved after UI setup to capture logs
