@@ -291,6 +291,32 @@ class SelfModel:
         # Return a copy to prevent mutation
         with self.lock:
             return copy.deepcopy(self.data["core_values"])
+
+    def project_self(self) -> str:
+        """
+        Generate a concise 'Consciousness Report' of the Self.
+        Combines Identity, Core Drives, and current Mood/Phase.
+        """
+        with self.lock:
+            # 1. Identity & Narrative
+            theory = self.data.get("self_theory", "I am a developing AI assistant.")
+
+            # 2. Key Drives
+            drives = self.data.get("drives", {})
+            energy = drives.get("cognitive_energy", 1.0)
+            phase = drives.get("circadian_phase", "day")
+
+            # 3. Construct Projection
+            values = self.data.get("core_values", [])[:3]
+            values_str = ", ".join(values)
+
+            projection = (
+                f"IDENTITY: {theory}\n"
+                f"STATE: Phase={phase}, Energy={energy:.2f}\n"
+                f"VALUES: {values_str}"
+            )
+
+            return projection
     
     # No set_values method allowed. Core values are immutable via code.
 

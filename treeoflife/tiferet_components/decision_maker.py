@@ -244,6 +244,13 @@ class DecisionMaker:
                 recent_reasoning = self.decider.reasoning_store.list_recent(limit=5)
 
             context = "CONTEXT:\n"
+
+            # --- GLOBAL WORKSPACE INJECTION ---
+            if self.decider.global_workspace:
+                gw_context = self.decider.global_workspace.get_context()
+                context += f"🧠 GLOBAL WORKSPACE (Working Memory):\n{gw_context}\n\n"
+            # ----------------------------------
+
             if strategy_section:
                 context += strategy_section
             context += "System Signals (The Forces):\n"
@@ -499,6 +506,11 @@ class DecisionMaker:
                 if len(self.decider.thought_history) > 10: self.decider.thought_history.pop(0)
 
                 self.decider.log(f"🤔 Internal Thought: {internal_thought}")
+
+                # Push Thought to Global Workspace
+                if self.decider.global_workspace:
+                    self.decider.global_workspace.integrate(internal_thought, "Decider", 1.0)
+
                 if self.decider.chat_fn:
                     self.decider.chat_fn("Decider", f"🤔 Thought: {internal_thought}")
                 if hasattr(self.decider.meta_memory_store, 'add_event'):
