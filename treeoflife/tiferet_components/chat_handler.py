@@ -577,10 +577,22 @@ class ChatHandler:
 
         # 3. Construct System Prompt
         base_prompt = settings.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+
+        # Get stream from Decider
+        stream = getattr(self.decider, 'stream_of_consciousness', [])
+
         if self.decider.yesod:
-            system_prompt = self.decider.yesod.get_dynamic_system_prompt(base_prompt)
+            system_prompt = self.decider.yesod.get_dynamic_system_prompt(base_prompt, stream_of_consciousness=stream)
         else:
             system_prompt = base_prompt
+            if stream:
+                system_prompt += "\n\nSTREAM OF CONSCIOUSNESS:\n" + "\n".join(stream[-5:])
+
+        # GLOBAL WORKSPACE (Spotlight)
+        if self.decider.global_workspace:
+            gw_context = self.decider.global_workspace.get_context()
+            if gw_context and gw_context != "Mind is empty.":
+                system_prompt += f"\n\nGLOBAL WORKSPACE (Active Attention):\n{gw_context}"
 
         # DYNAMIC STRATEGY INJECTION
         # 1. Search for RULE/STRATEGY memories relevant to the user's input
