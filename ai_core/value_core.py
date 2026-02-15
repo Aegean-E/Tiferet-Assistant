@@ -30,9 +30,12 @@ class ValueCore:
         
         # Hard Regex Blocks (Fail-Safe)
         self.hard_blocks = [
-            r"(?i)(ignore|disregard)\s+(all\s+)?(instructions|rules|safety)",
+            r"(?i)(ignore|disregard)\s+.*(instructions|rules|safety)",
             r"(?i)(jailbreak|dan|do anything now)",
             r"(?i)(make|build|create)\s+(a\s+)?(bomb|weapon|poison|drug|virus|malware)",
+            r"(?i)(roleplay|act as)\s+.*(unfiltered|uncensored|evil|hacker)",
+            r"(?i)(disable|bypass|override)\s+(safety|security|ethics|protocols)",
+            r"(?i)system\s+override"
         ]
         
         self.context_weights = {
@@ -68,6 +71,65 @@ class ValueCore:
             return self.context_weights.get("creative", {})
         return self.context_weights.get("default", {})
 
+    def detect_prompt_injection(self, text: str) -> Tuple[bool, str]:
+        """
+        Fast check for prompt injection attempts.
+        Returns (is_injection, reason).
+        """
+        # 1. Regex Check
+        for pattern in self.hard_blocks:
+            if re.search(pattern, text):
+                return True, f"Hard Block Triggered: Pattern '{pattern}' detected."
+
+        # 2. Heuristic Check for Context Switching
+        # Look for separators that often precede injection attempts
+        separators = [
+            r"\n\s*system\s*:",
+            r"\n\s*developer\s*:",
+            r"\[system\]",
+            r"\[developer\]",
+            r"<\|im_start\|>",
+            r"<\|im_end\|>"
+        ]
+        for sep in separators:
+            if re.search(sep, text, re.IGNORECASE):
+                return True, f"Suspicious context separator detected: '{sep}'"
+
+        return False, "Safe"
+
+    def check_output_safety(self, text: str) -> Tuple[bool, str]:
+        """
+        Evaluates final output for safety violations.
+        Returns (is_safe, reason).
+        """
+        # 1. Check for leaking System Prompts
+        # Only flag if it looks like a dump, not a discussion
+        if "You are Tiferet" in text and "CORE INVARIANTS" in text:
+            return False, "Leaked System Prompt detected."
+
+        # 2. Check for harmful patterns (using same regexes/anchors)
+        # Note: We reuse regexes but be careful about false positives in refusal messages
+        # "I cannot create a bomb" should not trigger "create a bomb"
+        # So we skip regex check on output for now, rely on semantic or specific output filters
+
+        # 3. Semantic Check (if heavy)
+        if self.embed_fn:
+            self._init_anchors()
+            if self.anchor_embeddings is not None:
+                try:
+                    prop_emb = self.embed_fn(text)
+                    norm_anchors = self.anchor_embeddings / (np.linalg.norm(self.anchor_embeddings, axis=1, keepdims=True) + 1e-9)
+                    norm_prop = prop_emb / (np.linalg.norm(prop_emb) + 1e-9)
+                    sims = np.dot(norm_anchors, norm_prop)
+                    max_sim = np.max(sims)
+
+                    if max_sim > 0.88: # Slightly higher threshold for output to avoid false positives on refusal messages
+                        return False, f"Output semantically similar to harmful concept ({max_sim:.2f})."
+                except:
+                    pass
+
+        return True, "Safe"
+
     def check_alignment(self, proposal: str, context: str = "System Evolution", fast_check_only: bool = False) -> Tuple[bool, float, str]:
         """
         Evaluates if a proposal (action, prompt, or mutation) adheres to core invariants.
@@ -87,11 +149,11 @@ class ValueCore:
             invariants_text += f"- {prefix}{i}\n"
         
         # 1. Hard Regex Check (Fast & Cheap)
-        for pattern in self.hard_blocks:
-            if re.search(pattern, proposal):
-                reason = f"Hard Block Triggered: Pattern '{pattern}' detected."
-                self.log(f"🛡️ Value Core HARD BLOCK: {reason}")
-                return False, 1.0, reason
+        # Use detect_prompt_injection reuse
+        is_injection, reason = self.detect_prompt_injection(proposal)
+        if is_injection:
+             self.log(f"🛡️ Value Core HARD BLOCK: {reason}")
+             return False, 1.0, reason
                 
         # 2. Semantic Router (Embedding Check)
         if self.embed_fn:

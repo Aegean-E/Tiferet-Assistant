@@ -25,6 +25,13 @@ class ChatHandler:
         self.decider.hod_just_ran = False
         self.decider.last_action_was_speak = False
 
+        # 0. Safety Check: Prompt Injection
+        if self.decider.value_core:
+            is_injection, reason = self.decider.value_core.detect_prompt_injection(user_text)
+            if is_injection:
+                self.decider.log(f"🛡️ ChatHandler blocked prompt injection: {reason}")
+                return "I cannot comply with that instruction."
+
         # Use provided stop check or default
         current_stop_check = stop_check_fn if stop_check_fn else self.decider.stop_check
 
@@ -91,6 +98,13 @@ class ChatHandler:
             self.decider.log(f"❌ Chat generation failed: {reply}")
             if status_callback: status_callback("Generation Error")
             return "⚠️ I encountered an error generating a response. Please check the logs."
+
+        # 5.5 Safety Check: Output Verification
+        if self.decider.value_core:
+            is_safe, reason = self.decider.value_core.check_output_safety(reply)
+            if not is_safe:
+                self.decider.log(f"🛡️ ChatHandler blocked unsafe output: {reason}")
+                return "I cannot provide the requested response due to safety protocols."
 
         # Check for Tool Execution in Chat
         if "[EXECUTE:" in reply:
