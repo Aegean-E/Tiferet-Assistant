@@ -53,6 +53,11 @@ class LLMError(Exception):
 
 _settings = {} 
 
+def configure_lm(settings: dict) -> None:
+    """Update global settings for the LM module."""
+    global _settings
+    _settings.update(settings)
+
 LM_STUDIO_BASE_URL = _settings.get("base_url", "http://127.0.0.1:1234/v1")
 CHAT_MODEL = _settings.get("chat_model", "qwen2.5-vl-7b-instruct-abliterated")
 EMBEDDING_MODEL = _settings.get("embedding_model", "text-embedding-nomic-embed-text-v1.5")
@@ -81,7 +86,7 @@ _EPI_CACHE = {
 
 def _get_epigenetics_logic() -> str:
     """Thread-safe hot-loader for epigenetics.json"""
-    path = "./data/epigenetics.json"
+    path = _settings.get("epigenetics_path", "./data/epigenetics.json")
     if not os.path.exists(path):
         return ""
 
