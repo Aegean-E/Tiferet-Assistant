@@ -8,7 +8,7 @@ import concurrent.futures
 from types import SimpleNamespace
 from typing import Dict, Callable, Optional, List, Any
 
-from .lm import compute_embedding, run_local_lm
+from .lm import compute_embedding, run_local_lm, configure_lm
 
 from .core_autonomy import AutonomyManager
 from .core_actions import ActionManager
@@ -128,6 +128,9 @@ class AICore:
         self.action_manager = ActionManager(self)
         self.bootstrap_manager = BootstrapManager(self)
 
+        # Initialize LM settings
+        configure_lm(self.get_settings())
+
         self.bootstrap_manager.init_brain()
         
         # Initialize Drive System
@@ -146,6 +149,7 @@ class AICore:
     def reload_models(self):
         """Check for model changes and re-index if needed."""
         settings = self.get_settings()
+        configure_lm(settings)
         new_emb_model = settings.get("embedding_model")
         
         if new_emb_model != self.current_embedding_model:

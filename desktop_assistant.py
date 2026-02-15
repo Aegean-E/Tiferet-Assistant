@@ -38,7 +38,7 @@ from bridges.telegram_api import TelegramBridge
 from ui import DesktopAssistantUI
 from docs.commands import handle_command as process_command_logic, NON_LOCKING_COMMANDS
 
-CURRENT_SETTINGS_VERSION = 1.1
+CURRENT_SETTINGS_VERSION = 1.2
 
 class UILogHandler(logging.Handler):
     """Redirects logging records to the UI's log method."""
@@ -404,6 +404,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 "temperature": 0.7,
                 "top_p": 0.94,
                 "max_tokens": 800,
+                "epigenetics_path": "./data/epigenetics.json",
                 "daydream_cycle_limit": 10,
                 "max_inconclusive_attempts": 3,
                 "max_retrieval_failures": 3,
@@ -437,6 +438,11 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 settings["plugin_config"] = {}
             if "faiss_save_threshold" not in settings:
                 settings["faiss_save_threshold"] = 50
+
+        if old_version < 1.2:
+            # Add new fields for v1.2
+            if "epigenetics_path" not in settings:
+                settings["epigenetics_path"] = "./data/epigenetics.json"
             
         settings["version"] = CURRENT_SETTINGS_VERSION
         self.save_settings_to_file(settings)
