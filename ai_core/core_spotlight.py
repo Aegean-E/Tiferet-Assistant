@@ -90,16 +90,24 @@ class GlobalWorkspace:
         Return a formatted string of the current Conscious State.
         Used by Decider and Self-Model.
         """
+        context_parts = []
+
+        # 1. Emotional Background (The "Feeling" of the moment)
+        if self.core.self_model:
+            state = self.core.self_model.current_emotional_state
+            v, a = self.core.self_model.current_feeling_tone
+            context_parts.append(f"[FEELING] I feel {state} (V:{v:.2f}, A:{a:.2f})")
+
+        # 2. Working Memory Items
         if not self.working_memory:
-            return "Mind is empty."
+            context_parts.append("Mind is empty.")
+        else:
+            for item in self.working_memory:
+                # Format: [SOURCE] Content (Salience)
+                s_val = int(item["salience"] * 100)
+                context_parts.append(f"[{item['source']}] {item['content']} ({s_val}%)")
 
-        lines = []
-        for item in self.working_memory:
-            # Format: [SOURCE] Content (Salience)
-            s_val = int(item["salience"] * 100)
-            lines.append(f"[{item['source']}] {item['content']} ({s_val}%)")
-
-        return "\n".join(lines)
+        return "\n".join(context_parts)
 
     def update(self):
         """

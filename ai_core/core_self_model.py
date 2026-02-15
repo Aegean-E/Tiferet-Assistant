@@ -292,6 +292,63 @@ class SelfModel:
         with self.lock:
             return copy.deepcopy(self.data["core_values"])
 
+    def calculate_feeling_tone(self) -> tuple[float, float]:
+        """
+        Calculate Valence and Arousal based on drives.
+        Returns: (Valence, Arousal)
+        Valence: 0.0 (Displeasure) to 1.0 (Pleasure)
+        Arousal: 0.0 (Calm/Lethargic) to 1.0 (Excited/Agitated)
+        """
+        drives = self.get_drives()
+        energy = drives.get("cognitive_energy", 1.0)
+        entropy = drives.get("entropy_score", 0.0)
+        loneliness = drives.get("loneliness", 0.0)
+        curiosity = drives.get("curiosity", 0.5)
+        survival = drives.get("survival", 0.0)
+
+        # Valence (Pleasure)
+        # Base: 0.5 (Neutral)
+        # + Energy (Feeling capable is good)
+        # - Entropy (Confusion is bad)
+        # - Loneliness (Isolation is bad)
+        # - Survival (Threat is bad)
+        valence = 0.5 + (0.5 * energy) - (0.3 * entropy) - (0.2 * loneliness) - (0.4 * survival)
+        valence = max(0.0, min(1.0, valence))
+
+        # Arousal (Energy/Activity)
+        # Base: 0.2 (Low baseline)
+        # + Curiosity (Seeking)
+        # + Survival (Fight/Flight)
+        # + Loneliness (Seeking connection)
+        # - Low Energy (Lethargy)
+        arousal = 0.2 + (0.4 * curiosity) + (0.5 * survival) + (0.3 * loneliness)
+        if energy < 0.3:
+            arousal -= 0.2
+        arousal = max(0.0, min(1.0, arousal))
+
+        return valence, arousal
+
+    @property
+    def current_emotional_state(self) -> str:
+        v, a = self.calculate_feeling_tone()
+
+        if a > 0.6:
+            if v > 0.6: return "Excited / Flow"
+            if v < 0.4: return "Anxious / Frustrated"
+            return "Alert / Active"
+        elif a < 0.4:
+            if v > 0.6: return "Content / Peaceful"
+            if v < 0.4: return "Depressed / Bored"
+            return "Calm / Passive"
+        else:
+            if v > 0.6: return "Happy"
+            if v < 0.4: return "Unhappy"
+            return "Neutral / Balanced"
+
+    @property
+    def current_feeling_tone(self) -> tuple[float, float]:
+        return self.calculate_feeling_tone()
+
     def project_self(self) -> str:
         """
         Generate a concise 'Consciousness Report' of the Self.
