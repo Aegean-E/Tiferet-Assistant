@@ -263,18 +263,29 @@ class GlobalWorkspace:
         Evolve the dominant thought using LLM (Chain of Thought).
         """
         dominant = self.get_dominant_thought()
+
         if not dominant:
-            return "Mind is empty."
-
-        content = dominant["content"]
-
-        prompt = (
-            f"CURRENT THOUGHT: {content}\n\n"
-            "You are the Inner Voice of the AI.\n"
-            "Expand on this thought. Connect it to broader implications, or refine it into a specific question.\n"
-            "Do not repeat the thought. Move it forward.\n"
-            "Output ONLY the new thought (1-2 sentences)."
-        )
+            # Mind is empty. Attempt to seed it.
+            if hasattr(self.core, 'self_model') and self.core.self_model:
+                content = self.core.self_model.project_self()
+                prompt = (
+                    f"SELF STATE: {content}\n\n"
+                    "You are the Inner Voice of the AI. The mind is currently empty.\n"
+                    "Generate a spontaneous thought based on your identity, current state, or a random curiosity.\n"
+                    "Start a new train of thought.\n"
+                    "Output ONLY the thought (1-2 sentences)."
+                )
+            else:
+                return "Mind is empty."
+        else:
+            content = dominant["content"]
+            prompt = (
+                f"CURRENT THOUGHT: {content}\n\n"
+                "You are the Inner Voice of the AI.\n"
+                "Expand on this thought. Connect it to broader implications, or refine it into a specific question.\n"
+                "Do not repeat the thought. Move it forward.\n"
+                "Output ONLY the new thought (1-2 sentences)."
+            )
 
         response = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
@@ -290,4 +301,4 @@ class GlobalWorkspace:
             self.integrate(response, "GlobalWorkspace", 1.0)
             return response
 
-        return content
+        return content if dominant else "Mind is empty."

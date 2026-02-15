@@ -37,6 +37,7 @@ class AIController:
         self.buffer_lock = threading.Lock()
         self.last_user_model_build_count = 0
         self.last_self_theory_build_count = 0
+        self._last_passive_thought = 0
         self.threads = {}
 
     def start_background_loops(self):
@@ -514,7 +515,27 @@ class AIController:
                         time.sleep(0.1)
                 elif not self.is_processing:
                     # STATE 2: PASSIVE OBSERVATION (Idle, No Lock)
-                    # Run observer to maintain "always working" state and detect triggers
+
+                    # 1. Passive Stream of Consciousness (Wandering Mind)
+                    # Throttle: Run every ~10 seconds to simulate background thought
+                    if time.time() - self._last_passive_thought > 10.0:
+                        if hasattr(self.ai_core, 'yesod') and self.ai_core.yesod and \
+                           hasattr(self.ai_core, 'decider') and self.ai_core.decider and \
+                           hasattr(self.ai_core, 'self_model') and self.ai_core.self_model:
+
+                            # Calculate Affective State (Snapshot)
+                            hesed = self.ai_core.hesed.calculate() if hasattr(self.ai_core, 'hesed') and hasattr(self.ai_core.hesed, 'calculate') else 0.5
+                            gevurah = self.ai_core.gevurah.calculate() if hasattr(self.ai_core, 'gevurah') and hasattr(self.ai_core.gevurah, 'calculate') else 0.5
+                            energy = self.ai_core.self_model.get_drives().get("cognitive_energy", 1.0)
+                            coherence = self.ai_core.keter.evaluate().get("keter", 1.0) if hasattr(self.ai_core, 'keter') and hasattr(self.ai_core.keter, 'evaluate') else 1.0
+
+                            affect_desc = self.ai_core.yesod.calculate_affective_state(hesed, gevurah, energy, coherence)
+
+                            # Generate spontaneous thought
+                            self._generate_stream_of_consciousness(affect_desc, "Idle/Observing", "Wandering Mind")
+                            self._last_passive_thought = time.time()
+
+                    # 2. Run observer to maintain "always working" state and detect triggers
                     if self.ai_core.observer and self.ai_core.decider and hasattr(self.ai_core.observer, 'observe'):
                         signal = self.ai_core.observer.observe()
                         # Feed signal to Decider (which may wake up if pressure is high)
