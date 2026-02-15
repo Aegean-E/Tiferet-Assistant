@@ -64,10 +64,34 @@ EMBEDDING_MODEL = _settings.get("embedding_model", "text-embedding-nomic-embed-t
 CHAT_COMPLETIONS_URL = f"{LM_STUDIO_BASE_URL}/chat/completions"
 
 # ==============================
+# Persistent Embedding Cache Config
+# ==============================
+DEFAULT_EMBEDDING_CACHE_DB = "./data/embedding_cache.sqlite3"
+EMBEDDING_CACHE_DB = DEFAULT_EMBEDDING_CACHE_DB
+
+# ==============================
 # System prompts
 # ==============================
 SYSTEM_PROMPT = _settings.get("system_prompt") or DEFAULT_SYSTEM_PROMPT_TEXT
 MEMORY_EXTRACTOR_PROMPT = _settings.get("memory_extractor_prompt") or DEFAULT_MEMORY_EXTRACTOR_PROMPT_TEXT
+
+def configure_lm(settings: Dict):
+    """
+    Update global configuration from a settings dictionary.
+    This should be called when settings are loaded or updated.
+    """
+    global _settings, LM_STUDIO_BASE_URL, CHAT_MODEL, EMBEDDING_MODEL, SYSTEM_PROMPT, MEMORY_EXTRACTOR_PROMPT, EMBEDDING_CACHE_DB
+
+    _settings.update(settings)
+
+    LM_STUDIO_BASE_URL = _settings.get("base_url", "http://127.0.0.1:1234/v1")
+    CHAT_MODEL = _settings.get("chat_model", "qwen2.5-vl-7b-instruct-abliterated")
+    EMBEDDING_MODEL = _settings.get("embedding_model", "text-embedding-nomic-embed-text-v1.5")
+
+    SYSTEM_PROMPT = _settings.get("system_prompt") or DEFAULT_SYSTEM_PROMPT_TEXT
+    MEMORY_EXTRACTOR_PROMPT = _settings.get("memory_extractor_prompt") or DEFAULT_MEMORY_EXTRACTOR_PROMPT_TEXT
+
+    EMBEDDING_CACHE_DB = _settings.get("embedding_cache_db", DEFAULT_EMBEDDING_CACHE_DB)
 
 # Aliases for external usage (e.g. GUI defaults)
 DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPT
@@ -409,7 +433,7 @@ def run_local_lm(
 # Persistent Embedding Cache
 # ==============================
 
-EMBEDDING_CACHE_DB = "./data/embedding_cache.sqlite3"
+# EMBEDDING_CACHE_DB is defined in Configuration Defaults section
 EMBEDDING_CACHE_LOCK = threading.Lock()
 
 
