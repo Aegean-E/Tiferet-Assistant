@@ -346,6 +346,12 @@ class Decider:
         self.command_executor.authorize_maintenance()
 
     def decide(self) -> Dict[str, Any]:
+        if self.keter:
+            keter_stats = self.keter.evaluate()
+            coherence = keter_stats.get('keter', 1.0)
+            if coherence < 0.3:
+                self.log(f"🚨 Decider: Critical Coherence (< 0.3). Forcing Sleep/Recovery.")
+                return {"task": "sleep", "reason": "Low Coherence Recovery", "cycles": 5}
         return self.decision_maker.decide()
 
     def _run_action(self, name: str, reason: str = None):

@@ -555,6 +555,39 @@ class AIController:
 
     def _generate_stream_of_consciousness(self, affect_desc, current_task, task_reason):
         """Generate a persistent internal thought and store it."""
+        if hasattr(self.ai_core, 'global_workspace') and self.ai_core.global_workspace and not self.is_thinking:
+            self.is_thinking = True
+            def run_thought_gw():
+                try:
+                    # Evolve the dominant thought using the Global Workspace
+                    settings = self.app.settings if hasattr(self.app, 'settings') else {}
+                    thought = self.ai_core.global_workspace.evolve_thought(
+                        chat_model=settings.get("chat_model"),
+                        base_url=settings.get("base_url")
+                    )
+
+                    if thought and not thought.startswith("⚠️"):
+                        # Store in Reasoning Store (Long-term stream)
+                        self.ai_core.reasoning_store.add(
+                            content=f"Internal Monologue: {thought}",
+                            source="stream_of_consciousness",
+                            confidence=1.0,
+                            ttl_seconds=86400 # 24 hours
+                        )
+
+                        # Update UI Stream (Short-term buffer)
+                        with self.stream_lock:
+                            self.stream_of_consciousness.append(f"💭 {thought}")
+                            if len(self.stream_of_consciousness) > 10:
+                                self.stream_of_consciousness.pop(0)
+                except Exception as e:
+                    logging.error(f"Global Workspace thought error: {e}")
+                finally:
+                    self.is_thinking = False
+
+            self.ai_core.thread_pool.submit(run_thought_gw)
+            return
+
         if not self.ai_core.yesod or not self.ai_core.reasoning_store: return
         if self.is_thinking: return
         
