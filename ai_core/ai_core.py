@@ -280,6 +280,9 @@ class AICore:
 
         # Update Global Workspace (Attention)
         if self.global_workspace:
+            # Inject Self-Projection
+            self_context = self.self_model.project_self()
+            self.global_workspace.integrate(self_context, "SelfModel", 0.5)
             self.global_workspace.update()
 
         # Delegate to DriveSystem
