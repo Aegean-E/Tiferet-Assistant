@@ -263,6 +263,46 @@ class SelfModel:
         with self.lock:
             return self.data.get("last_user_interaction", 0.0)
 
+    def calculate_feeling_tone(self) -> Dict[str, Any]:
+        """
+        Calculate the 'Feeling Tone' (Hedonic Tone + Arousal).
+        Returns a descriptive string and scores.
+        """
+        with self.lock:
+            drives = self.data["drives"]
+            energy = drives.get("cognitive_energy", 1.0)
+            entropy = drives.get("entropy_score", 0.0)
+            loneliness = drives.get("loneliness", 0.0)
+
+            # Simulated Valence (Pleasure/Displeasure)
+            # High energy, low entropy, low loneliness = Positive Valence
+            valence = (energy * 0.4) - (entropy * 0.4) - (loneliness * 0.2) + 0.5
+            valence = max(0.0, min(1.0, valence))
+
+            # Simulated Arousal (Activity/Passivity)
+            # High energy OR High entropy (stress) = High Arousal
+            arousal = (energy * 0.5) + (entropy * 0.5)
+            arousal = max(0.0, min(1.0, arousal))
+
+            # Describe the state
+            desc = "Neutral"
+            if valence > 0.6:
+                if arousal > 0.6: desc = "Excited/Curious"
+                else: desc = "Content/Calm"
+            elif valence < 0.4:
+                if arousal > 0.6: desc = "Anxious/Stressed"
+                else: desc = "Depressed/Bored"
+            else:
+                if arousal > 0.6: desc = "Alert"
+                else: desc = "Passive"
+
+            return {
+                "valence": valence,
+                "arousal": arousal,
+                "description": desc,
+                "summary": f"Feeling {desc} (V={valence:.2f}, A={arousal:.2f})"
+            }
+
     def get_drives(self) -> Dict[str, Any]:
         with self.lock:
             return self.data["drives"].copy()

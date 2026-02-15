@@ -1,11 +1,15 @@
 import time
-from typing import Dict, Any, Optional
+import threading
+from typing import Dict, Any, Optional, Deque
+from collections import deque
 
 class GlobalWorkspace:
     """
     The Global Workspace (Spotlight of Attention).
     Selects the most salient information (Drive, Goal, or Event) and broadcasts it
     as CONSCIOUS_CONTENT to all modules.
+
+    Now maintains a Stream of Consciousness (Short-term buffer).
     """
     def __init__(self, core):
         self.core = core
@@ -13,6 +17,31 @@ class GlobalWorkspace:
         self.last_update = time.time()
         self.update_interval = 10 # Seconds
         self.last_broadcast = time.time()
+        # Stream of Consciousness: Recent 10 items
+        self.conscious_stream: Deque[str] = deque(maxlen=10)
+        self.lock = threading.Lock()
+
+    def add_content(self, content: str, source: str = "System", type: str = "THOUGHT", salience: float = 0.5):
+        """Add an item to the conscious stream."""
+        entry = f"[{type}] {content}"
+        with self.lock:
+            # Avoid consecutive duplicates
+            if not self.conscious_stream or self.conscious_stream[-1] != entry:
+                self.conscious_stream.append(entry)
+
+        # Broadcast high salience items (outside lock to avoid potential deadlocks if broadcast recurses)
+        if salience > 0.8:
+            self.broadcast({"content": content, "type": type, "final_salience": salience})
+
+    def get_stream_context(self) -> str:
+        """Return the current stream of consciousness as a context string."""
+        with self.lock:
+            if not self.conscious_stream:
+                return "STREAM EMPTY."
+            # Create a copy list inside lock to prevent mutation during iteration
+            stream_copy = list(self.conscious_stream)
+
+        return "STREAM OF CONSCIOUSNESS (Recent):\n" + "\n".join([f"- {item}" for item in stream_copy])
 
     def update(self):
         """
@@ -129,6 +158,9 @@ class GlobalWorkspace:
             self.current_focus = winner["content"]
             self.last_broadcast = time.time()
             self.broadcast(winner)
+
+            # Push to Conscious Stream
+            self.add_content(winner["content"], "GlobalWorkspace", winner["type"], winner["final_salience"])
 
     def broadcast(self, content: Dict[str, Any]):
         """

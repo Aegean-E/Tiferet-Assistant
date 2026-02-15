@@ -110,13 +110,8 @@ class AIController:
                 if events_chunk and self.ai_core.yesod:
                     narrative = self.ai_core.yesod.synthesize_consciousness(events_chunk)
                     if narrative and not narrative.startswith("⚠️"):
-                        with self.stream_lock:
-                            self.stream_of_consciousness.append(f"💭 {narrative}")
-                            if len(self.stream_of_consciousness) > 10:
-                                self.stream_of_consciousness.pop(0)
-                            # Update Decider's view
-                            if self.ai_core.decider:
-                                self.ai_core.decider.stream_of_consciousness = list(self.stream_of_consciousness)
+                        if self.ai_core.global_workspace:
+                            self.ai_core.global_workspace.add_content(f"💭 {narrative}", "Narrator", "NARRATIVE", 0.7)
             except Exception as e:
                 logging.error(f"Narrator loop error: {e}")
             
@@ -462,18 +457,9 @@ class AIController:
                                         
                                         if self.stop_processing_flag or self.pause_daydream_flag: break
 
-                                        # Add to stream (deduplicate consecutive)
-                                        thought = f"[State] {affect_desc}"
-                                        with self.stream_lock:
-                                            if not self.stream_of_consciousness or self.stream_of_consciousness[-1] != thought:
-                                                self.stream_of_consciousness.append(thought)
-                                                if len(self.stream_of_consciousness) > 5:
-                                                    self.stream_of_consciousness.pop(0)
-                                        
-                                        # Inject into Decider
-                                        with self.stream_lock:
-                                            if self.ai_core.decider:
-                                                self.ai_core.decider.stream_of_consciousness = list(self.stream_of_consciousness)
+                                        # Add to Global Workspace
+                                        if self.ai_core.global_workspace:
+                                            self.ai_core.global_workspace.add_content(f"[State] {affect_desc}", "System", "AFFECT", 0.6)
 
                                     last_reason = heartbeat.task_reason
 
@@ -483,11 +469,8 @@ class AIController:
                                     # 4. Post-Action Reflection
                                     new_reason = heartbeat.task_reason
                                     if new_reason != last_reason:
-                                        reflection = f"I chose to {heartbeat.current_task} because {new_reason}"
-                                        with self.stream_lock:
-                                            self.stream_of_consciousness.append(reflection)
-                                            if len(self.stream_of_consciousness) > 5:
-                                                self.stream_of_consciousness.pop(0)
+                                        if self.ai_core.global_workspace:
+                                            self.ai_core.global_workspace.add_content(f"Action: {heartbeat.current_task} (Reason: {new_reason})", "Heartbeat", "REFLECTION", 0.5)
                                     
                                     # 5. Enhanced Stream of Consciousness (Internal Monologue)
                                     self._generate_stream_of_consciousness(affect_desc, task, new_reason)
@@ -573,11 +556,9 @@ class AIController:
                         ttl_seconds=86400 # 24 hours
                     )
                     
-                    # Update UI Stream (Short-term buffer)
-                    with self.stream_lock:
-                        self.stream_of_consciousness.append(f"💭 {thought}")
-                        if len(self.stream_of_consciousness) > 10:
-                            self.stream_of_consciousness.pop(0)
+                    # Push to Global Workspace
+                    if self.ai_core.global_workspace:
+                        self.ai_core.global_workspace.add_content(f"💭 {thought}", "Yesod", "THOUGHT", 0.9)
             except Exception as e:
                 logging.error(f"Stream of consciousness error: {e}")
             finally:

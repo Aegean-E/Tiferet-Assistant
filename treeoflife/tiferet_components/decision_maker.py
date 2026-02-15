@@ -66,6 +66,11 @@ class DecisionMaker:
                 self.decider.goal_manager.manage_goals(allow_creation=allow_goal_creation, system_mode=system_mode)
 
             self.decider.log("🤖 Decider: Planning next batch...")
+
+            # 1. Update Global Workspace (Spotlight)
+            if self.decider.global_workspace:
+                self.decider.global_workspace.update()
+
             settings = self.decider.get_settings()
 
             # Fetch Active Goals early (Fix for UnboundLocalError in Reflex path)
@@ -248,8 +253,11 @@ class DecisionMaker:
                 context += strategy_section
             context += "System Signals (The Forces):\n"
 
-            if self.decider.stream_of_consciousness:
-                # Use a local copy to avoid race conditions during iteration (though it's replaced atomically)
+            # Stream of Consciousness (Global Workspace)
+            if self.decider.global_workspace:
+                context += self.decider.global_workspace.get_stream_context() + "\n\n"
+            elif self.decider.stream_of_consciousness:
+                # Fallback
                 context += "STREAM OF CONSCIOUSNESS (Recent Thoughts):\n" + "\n".join([f"- {t}" for t in list(self.decider.stream_of_consciousness)]) + "\n\n"
 
             context += f"- Gevurah (Constraint): {gevurah_score:.2f} (Pressure)\n"
@@ -263,8 +271,13 @@ class DecisionMaker:
             if system_mode == "CONSOLIDATION":
                  context += "CONSTRAINT: System is overloaded. DO NOT create new goals. Focus on closing existing ones or consolidating memory.\n"
 
-            # Affective Bias Injection
-            if self.decider.mood < 0.3:
+            # Affective Bias Injection (Feeling Tone)
+            feeling_tone = "Neutral"
+            if self.decider.global_workspace and hasattr(self.decider.global_workspace.core, 'self_model') and self.decider.global_workspace.core.self_model:
+                ft = self.decider.global_workspace.core.self_model.calculate_feeling_tone()
+                feeling_tone = ft.get("summary", "Neutral")
+                context += f"EMOTIONAL STATE: {feeling_tone}. (Valence: {ft.get('valence', 0.5):.2f}, Arousal: {ft.get('arousal', 0.5):.2f})\n"
+            elif self.decider.mood < 0.3:
                 context += "EMOTIONAL STATE: Depressed/Fatigued. You feel discouraged. Prioritize stability, safety, and low-risk consolidation. Avoid new goals.\n"
             elif self.decider.mood > 0.8:
                 context += "EMOTIONAL STATE: Manic/Energetic. You feel highly capable. Prioritize high-risk, high-reward innovation and complex reasoning.\n"
@@ -507,6 +520,10 @@ class DecisionMaker:
                         subject="Assistant",
                         text=internal_thought
                     )
+
+                # Push to Conscious Stream
+                if self.decider.global_workspace:
+                    self.decider.global_workspace.add_content(internal_thought, "Decider", "THOUGHT", 0.9)
 
                 # Ethical Interlock: Check alignment before proceeding
                 if self.decider.value_core:
