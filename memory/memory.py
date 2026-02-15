@@ -848,33 +848,53 @@ class MemoryStore:
 
                 results = []
                 q_norm = np.linalg.norm(query_embedding)
+                if q_norm == 0: return []
+
+                BATCH_SIZE = 1000
 
                 while True:
-                    rows = cursor.fetchmany(1000)
+                    rows = cursor.fetchmany(BATCH_SIZE)
                     if not rows:
                         break
                     
+                    embeddings = []
+                    valid_rows = []
+
                     for r in rows:
                         if not r[4]: continue
                         try:
-                            mem_emb = np.array(json.loads(r[4]))
+                            emb = json.loads(r[4])
+                            if len(emb) != query_embedding.shape[0]:
+                                continue
+                            embeddings.append(emb)
+                            valid_rows.append(r)
                         except:
                             continue
+
+                    if not embeddings: continue
+
+                    E = np.array(embeddings, dtype='float32')
+
+                    # Vectorized cosine similarity
+                    dots = np.dot(E, query_embedding)
+                    norms = np.linalg.norm(E, axis=1)
+                    norms[norms == 0] = 1e-10
+
+                    sims = dots / (norms * q_norm)
+
+                    for i, sim in enumerate(sims):
+                        r = valid_rows[i]
+                        conf = r[5] if r[5] is not None else 0.5
+
+                        # Calculate weighted score
+                        weighted_score = float(sim) * (0.5 + (0.5 * conf))
+
+                        if target_affect is not None:
+                            mem_affect = r[6] if len(r) > 6 and r[6] is not None else 0.5
+                            affect_sim = 1.0 - abs(target_affect - mem_affect)
+                            weighted_score = (weighted_score * 0.8) + (affect_sim * 0.2)
                             
-                        if query_embedding.shape != mem_emb.shape:
-                            continue
-                        m_norm = np.linalg.norm(mem_emb)
-                        if m_norm > 0 and q_norm > 0:
-                            sim = np.dot(query_embedding, mem_emb) / (q_norm * m_norm)
-                            conf = r[5] if r[5] is not None else 0.5
-                            weighted_score = float(sim) * (0.5 + (0.5 * conf))
-                            
-                            if target_affect is not None:
-                                mem_affect = r[6] if len(r) > 6 and r[6] is not None else 0.5
-                                affect_sim = 1.0 - abs(target_affect - mem_affect)
-                                weighted_score = (weighted_score * 0.8) + (affect_sim * 0.2)
-                                
-                            results.append((r[0], r[1], r[2], r[3], round(float(weighted_score), 4)))
+                        results.append((r[0], r[1], r[2], r[3], round(float(weighted_score), 4)))
                 
                 results.sort(key=lambda x: x[4], reverse=True)
                 return results[:limit]
