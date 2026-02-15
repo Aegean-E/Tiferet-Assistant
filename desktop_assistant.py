@@ -112,9 +112,6 @@ class DesktopAssistantApp(DesktopAssistantUI):
         ui_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
         self.logger.addHandler(ui_handler)
         self.redirect_logging()
-        
-        # Redirect stdout/stderr to logging
-        # self.redirect_logging() # Disabled in favor of standard logging
 
         # Initialize Brain (Memory & Documents) - Moved after UI setup to capture logs
         self.chat_sessions = {} # {session_id: {'name': str, 'history': []}}

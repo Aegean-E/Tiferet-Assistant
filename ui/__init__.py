@@ -117,14 +117,6 @@ class DesktopAssistantUI(DocumentsUI, SettingsUI, MemoryDatabaseUI, GraphUI):
         # Apply initial theme colors to text widgets
         self.apply_theme_colors()
 
-    def redirect_logging(self):
-        """Redirect stdout and stderr to the logs tab"""
-        self.original_stdout = sys.stdout
-        self.original_stderr = sys.stderr
-
-        sys.stdout = StdoutRedirector(self, self.original_stdout)
-        sys.stderr = StdoutRedirector(self, self.original_stderr)
-
     def start_queue_poller(self):
         """Poll the GUI queue for updates from background threads."""
         try:
