@@ -413,7 +413,7 @@ class ChatHandler:
             query_embedding = future_embedding.result()
 
             # 4. Start Semantic Search (FAISS/DB)
-            future_semantic = submit_fn(self.decider.memory_store.search, query_embedding, limit=5, target_affect=self.decider.mood)
+            future_semantic = submit_fn(self.decider.memory_store.search, query_embedding, limit=10, target_affect=self.decider.mood)
 
             # 4.5 Start Meta-Memory Semantic Search (Autobiographical Memory)
             future_meta_semantic = submit_fn(self.decider.meta_memory_store.search, query_embedding, limit=3)
