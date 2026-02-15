@@ -619,7 +619,7 @@ class MemoryDatabaseUI:
         is_open = tk.BooleanVar(value=True)
 
         # Lazy load flag
-        is_loaded = [False] # Mutable closure hack
+        is_loaded = False
 
         def toggle():
             if is_open.get():
@@ -630,7 +630,7 @@ class MemoryDatabaseUI:
                 content_container.pack(fill=tk.X, expand=False, padx=10, pady=5)
                 is_open.set(True)
                 toggle_btn.configure(text=f"▼ {title}")
-                if not is_loaded[0]:
+                if not is_loaded:
                     populate_text()
 
         # Header Button
@@ -660,6 +660,7 @@ class MemoryDatabaseUI:
         if widget_height < 5: widget_height = 5
 
         def populate_text():
+            nonlocal is_loaded
             text_widget = scrolledtext.ScrolledText(
                 content_container,
                 wrap=tk.WORD,
@@ -693,7 +694,7 @@ class MemoryDatabaseUI:
             
             # Bind right-click
             text_widget.bind("<Button-3>", lambda e: self.on_memory_right_click(e, text_widget))
-            is_loaded[0] = True
+            is_loaded = True
 
         # Initial population
         populate_text()
