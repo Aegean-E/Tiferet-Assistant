@@ -159,7 +159,8 @@ class BootstrapManager:
                 memory_store=self.core.memory_store,
                 meta_memory_store=self.core.meta_memory_store,
                 log_fn=self.core.log,
-                event_bus=self.core.event_bus
+                event_bus=self.core.event_bus,
+                value_core=self.core.value_core
             )
 
             # Initialize Yesod (The Foundation/Persona)
