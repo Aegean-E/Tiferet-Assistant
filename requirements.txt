@@ -1,0 +1,14 @@
+numpy
+requests
+tiktoken
+Pillow
+openai-whisper
+ttkbootstrap
+PyMuPDF
+python-docx
+networkx
+pyvis
+dowhy
+pandas
+faiss-cpu
+pytesseract

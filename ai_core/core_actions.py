@@ -259,8 +259,6 @@ class ActionManager:
         def eval_node(node):
             if isinstance(node, ast.Constant):
                 return node.value
-            elif isinstance(node, ast.Num): # Python < 3.8 compatibility
-                return node.n
             elif isinstance(node, ast.BinOp):
                 op = type(node.op)
                 if op not in operators:
