@@ -6,8 +6,21 @@ import os
 import logging
 from docs.default_prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT, DAYDREAM_EXTRACTOR_PROMPT as DEFAULT_DAYDREAM_EXTRACTOR_PROMPT
 
+try:
+    from ttkbootstrap.widgets import ToolTip
+except ImportError:
+    try:
+        from ttkbootstrap.tooltip import ToolTip
+    except ImportError:
+        ToolTip = None
+
 class SettingsUI:
     """Mixin for Settings UI tab"""
+
+    def create_tooltip(self, widget, text):
+        """Helper to create a tooltip if available"""
+        if ToolTip:
+            ToolTip(widget, text=text, bootstyle="info")
 
     def setup_settings_tab(self):
         """Setup settings interface"""
@@ -28,128 +41,235 @@ class SettingsUI:
         settings_notebook = ttk.Notebook(self.settings_frame)
         settings_notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Model settings
+        # 1. Model Settings
         model_frame = ttk.Frame(settings_notebook)
         settings_notebook.add(model_frame, text=" Model")
+        self.setup_model_settings(model_frame)
 
+        # 2. Generation Settings
+        gen_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(gen_frame, text=" Generation")
+        self.setup_generation_settings(gen_frame)
+
+        # 3. Prompts Settings
+        prompts_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(prompts_frame, text=" Prompts")
+        self.setup_prompt_settings(prompts_frame)
+
+        # 4. Memory Settings
+        memory_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(memory_frame, text=" Memory")
+        self.setup_memory_settings(memory_frame)
+
+        # 5. General Settings
+        general_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(general_frame, text=" General")
+        self.setup_general_settings(general_frame)
+
+        # 6. Bridges Settings
+        bridges_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(bridges_frame, text=" Bridges")
+        self.setup_bridge_settings(bridges_frame)
+
+        # 7. Appearance Settings
+        appearance_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(appearance_frame, text=" Appearance")
+        self.setup_appearance_settings(appearance_frame)
+
+        # 8. Plugins Settings
+        plugins_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(plugins_frame, text=" Plugins")
+        self.setup_plugins_tab(plugins_frame)
+
+        # 9. Permissions Settings
+        perms_frame = ttk.Frame(settings_notebook)
+        settings_notebook.add(perms_frame, text=" Permissions")
+        self.setup_permissions_tab(perms_frame)
+
+    def setup_model_settings(self, parent):
         # URL settings box
-        url_box = ttk.LabelFrame(model_frame, text="API URLs")
+        url_box = ttk.LabelFrame(parent, text="API URLs")
         url_box.pack(fill=tk.X, padx=5, pady=5)
 
-        ttk.Label(url_box, text="Base URL:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl = ttk.Label(url_box, text="Base URL:")
+        lbl.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl, "The base URL for the LLM API (e.g., LM Studio, Ollama).")
+
         self.base_url_var = tk.StringVar(value="http://127.0.0.1:1234/v1")
         base_url_entry = ttk.Entry(url_box, textvariable=self.base_url_var, width=50)
         base_url_entry.grid(row=0, column=1, padx=5, pady=5)
 
-        # Model settings box (removed padding as it causes TclError)
-        model_box = ttk.LabelFrame(model_frame, text="Model Names")
+        # Model settings box
+        model_box = ttk.LabelFrame(parent, text="Model Names")
         model_box.pack(fill=tk.X, padx=5, pady=5)
 
-        ttk.Label(model_box, text="Chat Model:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_chat = ttk.Label(model_box, text="Chat Model:")
+        lbl_chat.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_chat, "The name of the LLM model to use for chat and reasoning.")
+
         self.chat_model_var = tk.StringVar(value="qwen2.5-vl-7b-instruct-abliterated")
         chat_model_entry = ttk.Entry(model_box, textvariable=self.chat_model_var, width=50)
         chat_model_entry.grid(row=0, column=1, padx=5, pady=5)
 
-        ttk.Label(model_box, text="Embedding Model:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_embed = ttk.Label(model_box, text="Embedding Model:")
+        lbl_embed.grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_embed, "The name of the model used for generating vector embeddings (Memory/RAG).")
+
         self.embedding_model_var = tk.StringVar(value="text-embedding-nomic-embed-text-v1.5")
         embedding_model_entry = ttk.Entry(model_box, textvariable=self.embedding_model_var, width=50)
         embedding_model_entry.grid(row=1, column=1, padx=5, pady=5)
 
-        # Generation settings tab
-        gen_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(gen_frame, text=" Generation")
-
-        gen_box = ttk.LabelFrame(gen_frame, text="Generation Parameters")
-        gen_box.pack(fill=tk.X, padx=5, pady=5)
-        gen_box.columnconfigure(1, weight=1)
+    def setup_generation_settings(self, parent):
+        # Creativity Group (Temperature & Top P)
+        creativity_box = ttk.LabelFrame(parent, text="Creativity & Randomness")
+        creativity_box.pack(fill=tk.X, padx=5, pady=5)
+        creativity_box.columnconfigure(1, weight=1)
 
         # Temperature
-        ttk.Label(gen_box, text="Temperature:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_temp = ttk.Label(creativity_box, text="Temperature:")
+        lbl_temp.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_temp, "Controls randomness. Lower (0.1) is deterministic, Higher (1.0+) is creative/chaotic.")
+
         self.temperature_var = tk.DoubleVar(value=0.7)
-        temp_scale = ttk.Scale(gen_box, from_=0.0, to=2.0, variable=self.temperature_var,
+        temp_scale = ttk.Scale(creativity_box, from_=0.0, to=2.0, variable=self.temperature_var,
                                command=lambda v: self.temperature_var.set(round(float(v), 2)))
         temp_scale.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=5)
-        temp_entry = ttk.Entry(gen_box, textvariable=self.temperature_var, width=10)
+        temp_entry = ttk.Entry(creativity_box, textvariable=self.temperature_var, width=10)
         temp_entry.grid(row=0, column=2, padx=5, pady=5)
 
         # Top P
-        ttk.Label(gen_box, text="Top P:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_top_p = ttk.Label(creativity_box, text="Top P:")
+        lbl_top_p.grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_top_p, "Nucleus sampling. Limits choices to top P% probability mass. Lower = more focused.")
+
         self.top_p_var = tk.DoubleVar(value=0.94)
-        top_p_scale = ttk.Scale(gen_box, from_=0.0, to=1.0, variable=self.top_p_var,
+        top_p_scale = ttk.Scale(creativity_box, from_=0.0, to=1.0, variable=self.top_p_var,
                                 command=lambda v: self.top_p_var.set(round(float(v), 2)))
         top_p_scale.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
-        top_p_entry = ttk.Entry(gen_box, textvariable=self.top_p_var, width=10)
+        top_p_entry = ttk.Entry(creativity_box, textvariable=self.top_p_var, width=10)
         top_p_entry.grid(row=1, column=2, padx=5, pady=5)
 
-        # Max Tokens
-        ttk.Label(gen_box, text="Max Tokens:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        self.max_tokens_var = tk.IntVar(value=800)
-        max_tokens_entry = ttk.Entry(gen_box, textvariable=self.max_tokens_var, width=10)
-        max_tokens_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
-
         # Auto-Adjust Step
-        ttk.Label(gen_box, text="Auto-Adjust Step:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_step = ttk.Label(creativity_box, text="Auto-Adjust Step:")
+        lbl_step.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_step, "How much to increase Temperature when retrying after a failure.")
+
         self.temperature_step_var = tk.DoubleVar(value=0.20)
-        step_scale = ttk.Scale(gen_box, from_=0.01, to=0.50, variable=self.temperature_step_var,
+        step_scale = ttk.Scale(creativity_box, from_=0.01, to=0.50, variable=self.temperature_step_var,
                                command=lambda v: self.temperature_step_var.set(round(float(v), 2)))
-        step_scale.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
-        step_entry = ttk.Entry(gen_box, textvariable=self.temperature_step_var, width=10)
-        step_entry.grid(row=3, column=2, padx=5, pady=5)
+        step_scale.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
+        step_entry = ttk.Entry(creativity_box, textvariable=self.temperature_step_var, width=10)
+        step_entry.grid(row=2, column=2, padx=5, pady=5)
 
-        # Prompts settings tab
-        prompts_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(prompts_frame, text=" Prompts")
+        # Constraints Group
+        constraints_box = ttk.LabelFrame(parent, text="Constraints")
+        constraints_box.pack(fill=tk.X, padx=5, pady=5)
 
-        prompts_box = ttk.LabelFrame(prompts_frame, text="Prompts")
+        # Max Tokens
+        lbl_tokens = ttk.Label(constraints_box, text="Max Tokens:")
+        lbl_tokens.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_tokens, "Maximum number of tokens the model can generate in a response.")
+
+        self.max_tokens_var = tk.IntVar(value=800)
+        max_tokens_entry = ttk.Entry(constraints_box, textvariable=self.max_tokens_var, width=10)
+        max_tokens_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+
+    def setup_prompt_settings(self, parent):
+        prompts_box = ttk.LabelFrame(parent, text="System & Instruction Prompts")
         prompts_box.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         prompts_box.columnconfigure(0, weight=1)
         prompts_box.rowconfigure(1, weight=1)
-        prompts_box.rowconfigure(3, weight=1)
+        prompts_box.rowconfigure(4, weight=1)
+        prompts_box.rowconfigure(7, weight=1)
 
-        ttk.Label(prompts_box, text="System Prompt:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.system_prompt_text = scrolledtext.ScrolledText(prompts_box, wrap=tk.WORD, height=10, width=60)
+        # Helper to reset prompt
+        def reset_prompt(target_widget, default_text):
+            if messagebox.askyesno("Reset Prompt", "Are you sure you want to reset this prompt to default?"):
+                target_widget.delete(1.0, tk.END)
+                target_widget.insert(tk.END, default_text)
+
+        # System Prompt
+        header_frame_1 = ttk.Frame(prompts_box)
+        header_frame_1.grid(row=0, column=0, sticky=tk.EW)
+
+        lbl_sys = ttk.Label(header_frame_1, text="System Prompt:")
+        lbl_sys.pack(side=tk.LEFT, padx=5, pady=5)
+        self.create_tooltip(lbl_sys, "The core personality and instructions for the AI.")
+
+        btn_reset_sys = ttk.Button(header_frame_1, text="Reset", style="link",
+                                   command=lambda: reset_prompt(self.system_prompt_text, DEFAULT_SYSTEM_PROMPT))
+        btn_reset_sys.pack(side=tk.RIGHT, padx=5)
+
+        self.system_prompt_text = scrolledtext.ScrolledText(prompts_box, wrap=tk.WORD, height=8, width=60)
         self.system_prompt_text.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        ttk.Label(prompts_box, text="Memory Extractor Prompt:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        self.memory_extractor_prompt_text = scrolledtext.ScrolledText(prompts_box, wrap=tk.WORD, height=15, width=60)
-        self.memory_extractor_prompt_text.grid(row=3, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Memory Extractor Prompt
+        header_frame_2 = ttk.Frame(prompts_box)
+        header_frame_2.grid(row=3, column=0, sticky=tk.EW)
 
-        ttk.Label(prompts_box, text="Daydream Extractor Prompt:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-        self.daydream_extractor_prompt_text = scrolledtext.ScrolledText(prompts_box, wrap=tk.WORD, height=15, width=60)
-        self.daydream_extractor_prompt_text.grid(row=5, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        lbl_mem = ttk.Label(header_frame_2, text="Memory Extractor Prompt:")
+        lbl_mem.pack(side=tk.LEFT, padx=5, pady=5)
+        self.create_tooltip(lbl_mem, "Instructions for extracting memories (Facts, Goals, etc.) from conversation.")
 
-        # Memory settings tab
-        memory_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(memory_frame, text=" Memory")
+        btn_reset_mem = ttk.Button(header_frame_2, text="Reset", style="link",
+                                   command=lambda: reset_prompt(self.memory_extractor_prompt_text, DEFAULT_MEMORY_EXTRACTOR_PROMPT))
+        btn_reset_mem.pack(side=tk.RIGHT, padx=5)
 
+        self.memory_extractor_prompt_text = scrolledtext.ScrolledText(prompts_box, wrap=tk.WORD, height=8, width=60)
+        self.memory_extractor_prompt_text.grid(row=4, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Daydream Extractor Prompt
+        header_frame_3 = ttk.Frame(prompts_box)
+        header_frame_3.grid(row=6, column=0, sticky=tk.EW)
+
+        lbl_day = ttk.Label(header_frame_3, text="Daydream Extractor Prompt:")
+        lbl_day.pack(side=tk.LEFT, padx=5, pady=5)
+        self.create_tooltip(lbl_day, "Instructions for extracting insights from internal monologues (Daydreaming).")
+
+        btn_reset_day = ttk.Button(header_frame_3, text="Reset", style="link",
+                                   command=lambda: reset_prompt(self.daydream_extractor_prompt_text, DEFAULT_DAYDREAM_EXTRACTOR_PROMPT))
+        btn_reset_day.pack(side=tk.RIGHT, padx=5)
+
+        self.daydream_extractor_prompt_text = scrolledtext.ScrolledText(prompts_box, wrap=tk.WORD, height=8, width=60)
+        self.daydream_extractor_prompt_text.grid(row=7, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+    def setup_memory_settings(self, parent):
         # Cycles & Limits
-        limits_box = ttk.LabelFrame(memory_frame, text="Cycles & Limits")
+        limits_box = ttk.LabelFrame(parent, text="Cycles & Limits")
         limits_box.pack(fill=tk.NONE, anchor=tk.W, padx=5, pady=5)
 
-        ttk.Label(limits_box, text="Daydream Cycles (Before Verification):").grid(row=0, column=0, sticky=tk.W, padx=5,
-                                                                                  pady=5)
+        lbl_cycle = ttk.Label(limits_box, text="Daydream Cycles (Before Verification):")
+        lbl_cycle.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_cycle, "How many thought cycles to run before verifying facts against memory.")
+
         self.daydream_cycle_limit_var = tk.IntVar(value=15)
-        ttk.Entry(limits_box, textvariable=self.daydream_cycle_limit_var, width=10).grid(row=0, column=1, padx=5,
-                                                                                         pady=5)
+        ttk.Entry(limits_box, textvariable=self.daydream_cycle_limit_var, width=10).grid(row=0, column=1, padx=5, pady=5)
 
-        ttk.Label(limits_box, text="Inconclusive Deletion Limit:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_incon = ttk.Label(limits_box, text="Inconclusive Deletion Limit:")
+        lbl_incon.grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_incon, "Delete a memory if it produces this many 'Inconclusive' verification results.")
+
         self.max_inconclusive_attempts_var = tk.IntVar(value=3)
-        ttk.Entry(limits_box, textvariable=self.max_inconclusive_attempts_var, width=10).grid(row=1, column=1, padx=5,
-                                                                                              pady=5)
+        ttk.Entry(limits_box, textvariable=self.max_inconclusive_attempts_var, width=10).grid(row=1, column=1, padx=5, pady=5)
 
-        ttk.Label(limits_box, text="Retrieval Failure Deletion Limit:").grid(row=2, column=0, sticky=tk.W, padx=5,
-                                                                             pady=5)
+        lbl_ret = ttk.Label(limits_box, text="Retrieval Failure Deletion Limit:")
+        lbl_ret.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_ret, "Delete a memory if it fails to be retrieved/verified this many times.")
+
         self.max_retrieval_failures_var = tk.IntVar(value=3)
-        ttk.Entry(limits_box, textvariable=self.max_retrieval_failures_var, width=10).grid(row=2, column=1, padx=5,
-                                                                                           pady=5)
+        ttk.Entry(limits_box, textvariable=self.max_retrieval_failures_var, width=10).grid(row=2, column=1, padx=5, pady=5)
 
-        ttk.Label(limits_box, text="Verification Concurrency:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_conc = ttk.Label(limits_box, text="Verification Concurrency:")
+        lbl_conc.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_conc, "Number of parallel threads used for memory verification.")
+
         self.concurrency_var = tk.IntVar(value=4)
         ttk.Entry(limits_box, textvariable=self.concurrency_var, width=10).grid(row=3, column=1, padx=5, pady=5)
 
         # Consolidation Thresholds
-        thresholds_box = ttk.LabelFrame(memory_frame, text="Consolidation Thresholds (0.0 - 1.0)")
+        thresholds_box = ttk.LabelFrame(parent, text="Consolidation Thresholds (0.0 - 1.0)")
         thresholds_box.pack(fill=tk.NONE, anchor=tk.W, padx=5, pady=5)
+        self.create_tooltip(thresholds_box, "Minimum confidence score required to save a new memory of this type.")
 
         self.threshold_vars = {}
         # Hierarchy order: PERMISSION -> RULE -> IDENTITY -> PREFERENCE -> GOAL -> FACT -> BELIEF
@@ -162,12 +282,23 @@ class SettingsUI:
             self.threshold_vars[t] = var
             ttk.Entry(thresholds_box, textvariable=var, width=8).grid(row=i, column=1, padx=5, pady=5)
 
-        # General settings tab
-        general_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(general_frame, text=" General")
+        # FAISS Settings
+        faiss_frame = ttk.LabelFrame(parent, text="FAISS Index Settings (Advanced)")
+        faiss_frame.pack(fill=tk.X, padx=5, pady=5)
 
+        ttk.Label(faiss_frame, text="Index Type:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.faiss_index_type_var = tk.StringVar(value="IndexFlatIP")
+        faiss_type_combo = ttk.Combobox(faiss_frame, textvariable=self.faiss_index_type_var, values=["IndexFlatIP", "IndexIVFFlat"])
+        faiss_type_combo.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(faiss_frame, text="nlist (for IndexIVFFlat):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.faiss_nlist_var = tk.IntVar(value=100)
+        faiss_nlist_entry = ttk.Entry(faiss_frame, textvariable=self.faiss_nlist_var, width=10)
+        faiss_nlist_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    def setup_general_settings(self, parent):
         # Startup settings
-        startup_box = ttk.LabelFrame(general_frame, text="Startup Settings")
+        startup_box = ttk.LabelFrame(parent, text="Startup Settings")
         startup_box.pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Label(startup_box, text="Initial AI Mode:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -176,21 +307,45 @@ class SettingsUI:
                                      state="readonly", width=15)
         ai_mode_combo.grid(row=0, column=1, padx=5, pady=5)
 
-        # Bridges settings
-        bridges_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(bridges_frame, text=" Bridges")
+        # Storage Settings
+        storage_box = ttk.LabelFrame(parent, text="Storage & Backup")
+        storage_box.pack(fill=tk.X, padx=5, pady=5)
 
+        lbl_backup = ttk.Label(storage_box, text="Backup Directory:")
+        lbl_backup.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+
+        self.backup_dir_var = tk.StringVar(value="./data/backups")
+
+        backup_frame = ttk.Frame(storage_box)
+        backup_frame.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=5)
+
+        ttk.Entry(backup_frame, textvariable=self.backup_dir_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def select_backup_dir():
+            path = filedialog.askdirectory(initialdir=self.backup_dir_var.get())
+            if path:
+                self.backup_dir_var.set(path)
+
+        ttk.Button(backup_frame, text="Browse...", command=select_backup_dir, bootstyle="secondary-outline").pack(side=tk.LEFT, padx=5)
+
+    def setup_bridge_settings(self, parent):
         # Telegram bridge settings box
-        telegram_box = ttk.LabelFrame(bridges_frame, text="Telegram Bridge Settings")
+        telegram_box = ttk.LabelFrame(parent, text="Telegram Bridge Settings")
         telegram_box.pack(fill=tk.X, padx=5, pady=5, ipadx=5, ipady=5)
 
         # Telegram settings inside the box
-        ttk.Label(telegram_box, text="Bot Token:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_token = ttk.Label(telegram_box, text="Bot Token:")
+        lbl_token.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_token, "The API token provided by BotFather.")
+
         self.bot_token_var = tk.StringVar()
         bot_token_entry = ttk.Entry(telegram_box, textvariable=self.bot_token_var, width=50)
         bot_token_entry.grid(row=0, column=1, padx=5, pady=5)
 
-        ttk.Label(telegram_box, text="Chat ID:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        lbl_chat = ttk.Label(telegram_box, text="Chat ID:")
+        lbl_chat.grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.create_tooltip(lbl_chat, "Your numerical User ID on Telegram.")
+
         self.chat_id_var = tk.StringVar()
         chat_id_entry = ttk.Entry(telegram_box, textvariable=self.chat_id_var, width=50)
         chat_id_entry.grid(row=1, column=1, padx=5, pady=5)
@@ -205,9 +360,9 @@ class SettingsUI:
         )
         telegram_toggle.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=10)
 
-        # Appearance settings
-        appearance_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(appearance_frame, text="Appearance")
+    def setup_appearance_settings(self, parent):
+        appearance_frame = ttk.Frame(parent)
+        appearance_frame.pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Label(appearance_frame, text="Theme:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.theme_var = tk.StringVar(value="Darkly")
@@ -215,30 +370,6 @@ class SettingsUI:
             "Cosmo", "Cyborg", "Darkly"
         ])
         theme_combo.grid(row=0, column=1, padx=5, pady=5)
-
-        # FAISS Settings
-        faiss_frame = ttk.LabelFrame(memory_frame, text="FAISS Index Settings")
-        faiss_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Label(faiss_frame, text="Index Type:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.faiss_index_type_var = tk.StringVar(value="IndexFlatIP")
-        faiss_type_combo = ttk.Combobox(faiss_frame, textvariable=self.faiss_index_type_var, values=["IndexFlatIP", "IndexIVFFlat"])
-        faiss_type_combo.grid(row=0, column=1, padx=5, pady=5)
-
-        ttk.Label(faiss_frame, text="nlist (for IndexIVFFlat):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.faiss_nlist_var = tk.IntVar(value=100)
-        faiss_nlist_entry = ttk.Entry(faiss_frame, textvariable=self.faiss_nlist_var, width=10)
-        faiss_nlist_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        # Plugins tab
-        plugins_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(plugins_frame, text=" Plugins")
-        self.setup_plugins_tab(plugins_frame)
-
-        # Permissions tab
-        perms_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(perms_frame, text=" Permissions")
-        self.setup_permissions_tab(perms_frame)
 
     def load_settings_into_ui(self):
         """Load settings into UI fields"""
@@ -286,6 +417,9 @@ class SettingsUI:
 
         self.faiss_index_type_var.set(self.settings.get("faiss_index_type", "IndexFlatIP"))
         self.faiss_nlist_var.set(self.settings.get("faiss_nlist", 100))
+
+        # Load Backup Dir
+        self.backup_dir_var.set(self.settings.get("backup_dir", "./data/backups"))
 
     def setup_permissions_tab(self, parent):
         """Setup tool permissions interface."""
@@ -397,6 +531,27 @@ class SettingsUI:
     def save_settings_from_ui(self):
         """Save settings from UI fields"""
         try:
+            # 1. Validation
+            try:
+                temp = self.temperature_var.get()
+                if not (0.0 <= temp <= 2.0):
+                    raise ValueError("Temperature must be between 0.0 and 2.0")
+
+                top_p = self.top_p_var.get()
+                if not (0.0 <= top_p <= 1.0):
+                    raise ValueError("Top P must be between 0.0 and 1.0")
+
+                tokens = self.max_tokens_var.get()
+                if tokens <= 0:
+                     raise ValueError("Max Tokens must be positive")
+
+                concurrency = self.concurrency_var.get()
+                if concurrency <= 0:
+                    raise ValueError("Concurrency must be positive")
+            except ValueError as ve:
+                messagebox.showerror("Validation Error", str(ve))
+                return
+
             self.settings["bot_token"] = self.bot_token_var.get()
             self.settings["chat_id"] = self.chat_id_var.get()
             self.settings["theme"] = self.theme_var.get().lower()  # Convert to lowercase for ttkbootstrap
@@ -412,6 +567,7 @@ class SettingsUI:
             self.settings["memory_extractor_prompt"] = self.memory_extractor_prompt_text.get(1.0, tk.END).strip()
             self.settings["daydream_extractor_prompt"] = self.daydream_extractor_prompt_text.get(1.0, tk.END).strip()
             self.settings["ai_mode"] = self.ai_mode_var.get()
+            self.settings["backup_dir"] = self.backup_dir_var.get()
 
             # Memory settings
             self.settings["daydream_cycle_limit"] = self.daydream_cycle_limit_var.get()
@@ -453,7 +609,10 @@ class SettingsUI:
                 # If bridge is disabled, make sure we're disconnected
                 self.disconnect()
 
-            messagebox.showinfo("Settings", "Settings saved successfully!")
+            # Create a custom popup or toast if possible, otherwise use standard messagebox
+            # but maybe less intrusive? Standard is fine for now.
+            messagebox.showinfo("Success", "Settings saved successfully.")
+
         except tk.TclError as e:
             messagebox.showerror("Validation Error", f"Invalid input in settings: {e}\nPlease check numeric fields.")
         except Exception as e:
