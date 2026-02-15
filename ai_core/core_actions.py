@@ -6,6 +6,7 @@ import traceback
 from datetime import datetime
 from .lm import run_local_lm
 from .utils import parse_json_object_loose
+from .safety_checks import PluginSafetyValidator
 import threading
 import concurrent.futures
 import sys
@@ -26,6 +27,7 @@ class ActionManager:
         self._plugin_registry = {} # {plugin_name: {'enabled': bool, 'description': str}}
         self._tool_origins = {} # {tool_name: plugin_name}
         self._current_loading_plugin = None
+        self.plugin_validator = PluginSafetyValidator(log_fn=self.core.log)
 
     def get_tools(self):
         """Define all available tools here."""
@@ -97,6 +99,20 @@ class ActionManager:
                     continue
 
                 try:
+                    # 1. Static Safety Check before loading
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            code = f.read()
+                        is_safe, reason = self.plugin_validator.check_static(code)
+                        if not is_safe:
+                            self.core.log(f"🛑 Plugin '{plugin_name}' blocked during load: {reason}")
+                            self._plugin_registry[plugin_name] = {'enabled': False, 'description': f"BLOCKED: {reason}"}
+                            continue
+                    except Exception as e:
+                        self.core.log(f"⚠️ Failed to scan plugin {filename}: {e}")
+                        continue
+
+                    # 2. Load Plugin
                     spec = importlib.util.spec_from_file_location(plugin_name, path)
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)

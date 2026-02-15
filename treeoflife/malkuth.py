@@ -12,6 +12,7 @@ import math
 from typing import Dict, Any, List, Optional
 from ai_core.lm import run_local_lm
 from ai_core.utils import parse_json_object_loose
+from ai_core.safety_checks import PluginSafetyValidator
 
 try:
     import networkx as nx
@@ -114,11 +115,13 @@ class SimplePhysicsEngine:
             self.log.append(f"[{self.t:.2f}s] Collision: {a['name']} <-> {b['name']}")
 
 class Malkuth:
-    def __init__(self, memory_store=None, meta_memory_store=None, log_fn=logging.info, event_bus=None):
+    def __init__(self, memory_store=None, meta_memory_store=None, log_fn=logging.info, event_bus=None, value_core=None):
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
         self.log = log_fn
         self.event_bus = event_bus
+        self.value_core = value_core
+        self.plugin_validator = PluginSafetyValidator(log_fn=self.log)
         self.causal_graph = nx.DiGraph() if NX_AVAILABLE else None
         
         # Step 1: World Model Layer Persistence
@@ -332,36 +335,12 @@ class Malkuth:
         if not filename.endswith(".py"):
             return "Error: Plugin filename must end with .py"
 
-        # 2. AST Safety Analysis
-        try:
-            tree = ast.parse(content)
-        except SyntaxError as e:
-            return f"Error: Invalid Python syntax: {e}"
+        # 2. Safety Analysis (Static + Semantic)
+        is_safe, reason = self.plugin_validator.validate(content, self.value_core)
 
-        dangerous_imports = {'os', 'sys', 'subprocess', 'shutil', 'socket', 'importlib', 'pickle', 'marshal', 'ctypes'}
-        dangerous_calls = {'eval', 'exec', 'compile', 'open', '__import__', 'input'}
-
-        for node in ast.walk(tree):
-            # Check imports
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                if isinstance(node, ast.Import):
-                    names = [n.name.split('.')[0] for n in node.names]
-                else:
-                    names = [node.module.split('.')[0]] if node.module else []
-
-                for name in names:
-                    if name in dangerous_imports:
-                        return f"Error: Import of '{name}' is forbidden for safety."
-
-            # Check calls
-            elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    if node.func.id in dangerous_calls:
-                        return f"Error: Call to '{node.func.id}' is forbidden."
-                elif isinstance(node.func, ast.Attribute):
-                    # Check for things like os.system (though import os is blocked, this catches aliases if missed)
-                    if hasattr(node.func.value, 'id') and node.func.value.id in dangerous_imports:
-                        return f"Error: Call to '{node.func.value.id}.{node.func.attr}' is forbidden."
+        if not is_safe:
+            self.log(f"🛑 [Malkuth] Plugin blocked by Safety Validator: {reason}")
+            return f"Error: Plugin rejected by Safety Validator. Reason: {reason}"
 
         # 3. Write File
         plugins_dir = os.path.abspath("./plugins")
