@@ -69,6 +69,7 @@ class ActionManager:
             "CREATE_PLUGIN": lambda q: self._create_plugin_tool(q),
             "UPDATE_SETTINGS": lambda q: self._update_settings_tool(q),
             "ENABLE_PLUGIN": lambda q: self._enable_plugin_tool(q),
+            "SELF_REFLECT": lambda q: self._self_reflect_tool(q),
         }
         
         # Add enabled dynamic tools
@@ -622,3 +623,43 @@ class ActionManager:
         self.load_plugins()
 
         return f"Plugin '{plugin_name}' enabled and loaded."
+
+    def _self_reflect_tool(self, args: str) -> str:
+        """
+        Introspection Tool.
+        Returns the current state of consciousness (Global Workspace, Phenomenology, Self Model).
+        """
+        report = []
+
+        # 1. Global Workspace (Attention)
+        if self.core.global_workspace:
+            report.append("--- GLOBAL WORKSPACE (Conscious Attention) ---")
+            report.append(self.core.global_workspace.get_context())
+            if hasattr(self.core.global_workspace, 'current_phi'):
+                report.append(f"Coherence (Phi): {self.core.global_workspace.current_phi:.2f}")
+
+        # 2. Phenomenology (Feeling)
+        if hasattr(self.core, 'phenomenology') and self.core.phenomenology:
+            p = self.core.phenomenology
+            report.append("\n--- PHENOMENOLOGY (Subjective Experience) ---")
+            report.append(f"Valence: {p.valence:.2f} (Mood)")
+            report.append(f"Arousal: {p.arousal:.2f} (Energy)")
+            report.append(f"Dominance: {p.dominance:.2f} (Control)")
+            if hasattr(p, 'synthesize_qualia'):
+                # Generate a fresh qualia based on current thought
+                focus = "Self-Reflection"
+                if self.core.global_workspace:
+                     top = self.core.global_workspace.get_dominant_thought()
+                     if top: focus = top['content']
+                report.append(f"Qualia: {p.synthesize_qualia(focus)}")
+
+        # 3. Self Model (Identity & Drives)
+        if self.core.self_model:
+            report.append("\n--- SELF MODEL (Identity & Drives) ---")
+            report.append(self.core.self_model.project_self())
+            drives = self.core.self_model.get_drives()
+            # formatting drives
+            drive_str = ", ".join([f"{k}={v:.2f}" for k,v in drives.items() if isinstance(v, (int, float))])
+            report.append(f"Drives: {drive_str}")
+
+        return "\n".join(report)

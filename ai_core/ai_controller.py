@@ -521,6 +521,20 @@ class AIController:
                         if signal: self.ai_core.decider.ingest_netzach_signal(signal)
                         # Check for autonomous agency (Curiosity/Study)
                         self.ai_core.run_autonomous_agency_check(signal)
+
+                    # --- CONSCIOUSNESS: IDLE STREAM ---
+                    # Periodically generate stream of consciousness even when idle (Mind Wandering)
+                    # Run every ~20 seconds (1 in 20 chance per 1s loop)
+                    if not self.is_thinking:
+                        import random
+                        if random.random() < 0.05:
+                            # Heuristic Affect Description (since we don't have full context here)
+                            affect_desc = "Idle / Observing"
+                            if self.ai_core.self_model:
+                                affect_desc = self.ai_core.self_model.current_emotional_state
+
+                            self._generate_stream_of_consciousness(affect_desc, "Passive Observation", "Mind Wandering")
+
                     if self.ai_core.shutdown_event.wait(1.0):
                         break
                 else:

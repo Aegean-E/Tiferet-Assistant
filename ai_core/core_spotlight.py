@@ -17,6 +17,7 @@ class GlobalWorkspace:
         self.capacity = 7 # The magical number 7 +/- 2
         self.last_update = time.time()
         self.update_interval = 2.0 # Faster update cycle for fluidity
+        self.current_phi = 1.0
         self.last_broadcast = time.time()
         self.stream_file = "./data/stream_of_consciousness.md"
 
@@ -67,6 +68,31 @@ class GlobalWorkspace:
         data = event.data or {}
         content = data.get("content", "Goal")
         self.integrate(f"Goal Completed: {content}", "GoalManager", 0.9)
+
+    def calculate_phi(self) -> float:
+        """
+        Calculate Integrated Information (Phi) - A measure of coherence.
+        Uses pairwise semantic similarity of working memory items.
+        """
+        if len(self.working_memory) < 2:
+            return 1.0 # Trivial coherence
+
+        total_similarity = 0.0
+        comparisons = 0
+
+        # Calculate average pairwise similarity
+        for i in range(len(self.working_memory)):
+            for j in range(i + 1, len(self.working_memory)):
+                s1 = self.working_memory[i]["content"]
+                s2 = self.working_memory[j]["content"]
+                ratio = difflib.SequenceMatcher(None, s1, s2).ratio()
+                total_similarity += ratio
+                comparisons += 1
+
+        if comparisons == 0:
+            return 1.0
+
+        return total_similarity / comparisons
 
     def integrate(self, content: str, source: str, salience: float, metadata: Dict = None):
         """
@@ -149,7 +175,7 @@ class GlobalWorkspace:
         if self.core.self_model:
             state = self.core.self_model.current_emotional_state
             v, a = self.core.self_model.current_feeling_tone
-            context_parts.append(f"[FEELING] I feel {state} (V:{v:.2f}, A:{a:.2f})")
+            context_parts.append(f"[FEELING] I feel {state} (V:{v:.2f}, A:{a:.2f}, Phi:{self.current_phi:.2f})")
 
         # 2. Working Memory Items
         if not self.working_memory:
@@ -176,12 +202,15 @@ class GlobalWorkspace:
         # 2. Poll Competing Signals (Pull-based)
         self._gather_signals()
 
-        # 3. Broadcast if significant change
+        # 3. Calculate Phi (Integrated Information)
+        self.current_phi = self.calculate_phi()
+
+        # 4. Broadcast if significant change
         if self.working_memory:
             top_item = self.working_memory[0]
             # Always broadcast periodically to keep system alive
             if time.time() - self.last_broadcast > 5.0:
-                self.broadcast(top_item)
+                self.broadcast(top_item, self.current_phi)
 
     def _gather_signals(self):
         """Gather inputs from Drives, Goals, Sensory."""
@@ -218,7 +247,7 @@ class GlobalWorkspace:
 
                  self.integrate(f"Current Goal: {text}", "GoalManager", 0.6)
 
-    def broadcast(self, top_item: Dict[str, Any]):
+    def broadcast(self, top_item: Dict[str, Any], phi: float = 1.0):
         """
         Broadcast the full conscious context.
         """
@@ -227,7 +256,7 @@ class GlobalWorkspace:
         # 1. Log to Stream of Consciousness File
         try:
             timestamp = time.strftime("%H:%M:%S")
-            log_entry = f"**[{timestamp}]**\n{context_str}\n\n---\n\n"
+            log_entry = f"**[{timestamp}]** (Phi: {phi:.2f})\n{context_str}\n\n---\n\n"
             with open(self.stream_file, "a", encoding="utf-8") as f:
                 f.write(log_entry)
         except Exception as e:
@@ -236,7 +265,7 @@ class GlobalWorkspace:
 
         # 2. Event Bus
         if self.core.event_bus:
-            self.core.log(f"🔦 Workspace: Focus on '{top_item['content']}'")
+            self.core.log(f"🔦 Workspace: Focus on '{top_item['content']}' (Phi: {phi:.2f})")
             # We publish the top item as the 'focus', but include full context in data
             self.core.event_bus.publish(
                 "CONSCIOUS_CONTENT",
@@ -244,7 +273,8 @@ class GlobalWorkspace:
                     "focus": top_item["content"],
                     "salience": top_item["salience"],
                     "full_context": context_str,
-                    "working_memory": self.working_memory
+                    "working_memory": self.working_memory,
+                    "phi": phi
                 },
                 source="GlobalWorkspace",
                 priority=10

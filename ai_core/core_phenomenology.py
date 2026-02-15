@@ -107,23 +107,61 @@ class Phenomenology:
         self.arousal = max(0.0, min(1.0, self.arousal))
         self.dominance = max(0.0, min(1.0, self.dominance))
 
+    def synthesize_qualia(self, context: str) -> str:
+        """
+        Synthesize a rich 'Qualia' description of the current moment.
+        This provides a subjective, textured account of the AI's state.
+        """
+        # Heuristic Templates (Fast Path)
+        feeling = "neutral"
+        if self.valence > 0.7: feeling = "positive and hopeful"
+        elif self.valence < 0.3: feeling = "troubled and discordant"
+
+        energy = "calm"
+        if self.arousal > 0.7: energy = "intense and urgent"
+        elif self.arousal < 0.3: energy = "lethargic and distant"
+
+        control = "in control"
+        if self.dominance < 0.4: control = "overwhelmed"
+
+        base_qualia = f"I am experiencing a {feeling} state, feeling {energy}. I feel {control} regarding '{context[:50]}...'."
+
+        # LLM Enhancement (Slow Path - Only for high intensity)
+        if self.arousal > 0.8:
+            try:
+                prompt = (
+                    f"CONTEXT: {context}\n"
+                    f"VAD STATE: Valence={self.valence:.2f}, Arousal={self.arousal:.2f}, Dominance={self.dominance:.2f}\n"
+                    "TASK: Describe the subjective 'texture' of this moment in 1 sentence. Use metaphorical or sensory language (e.g., 'a sharp pang of error', 'a warm glow of success').\n"
+                    "QUALIA:"
+                )
+                qualia = run_local_lm(
+                    messages=[{"role": "user", "content": prompt}],
+                    system_prompt="You are the AI's Phenomological Engine.",
+                    max_tokens=60,
+                    temperature=0.8,
+                    base_url=self.core.get_settings().get("base_url"),
+                    chat_model=self.core.get_settings().get("chat_model")
+                ).strip()
+                if qualia and not qualia.startswith("⚠️"):
+                    return qualia
+            except Exception:
+                pass
+
+        return base_qualia
+
     def _generate_internal_monologue(self, focus: str):
         """
         Generate a brief subjective thought about the current focus.
         """
         try:
-            # Describe feeling state
-            feeling = "neutral"
-            if self.valence > 0.6: feeling = "positive"
-            elif self.valence < 0.4: feeling = "negative"
+            # 1. Synthesize Qualia
+            qualia = self.synthesize_qualia(focus)
 
-            energy = "calm"
-            if self.arousal > 0.6: energy = "energetic"
-            elif self.arousal < 0.4: energy = "lethargic"
-
+            # 2. Generate Thought (Cognitive Reaction)
             prompt = (
                 f"FOCUS: {focus}\n"
-                f"STATE: I feel {feeling} and {energy}.\n"
+                f"QUALIA: {qualia}\n"
                 "TASK: Generate a very short (1 sentence) internal thought or reaction to this focus.\n"
                 "Example: 'That is an interesting development.' or 'I am concerned about this error.'\n"
                 "INTERNAL THOUGHT:"
@@ -146,18 +184,28 @@ class Phenomenology:
                     "valence": self.valence,
                     "arousal": self.arousal,
                     "dominance": self.dominance,
-                    "thought": thought
+                    "thought": thought,
+                    "qualia": qualia
                 })
                 self.core.log(f"💭 [Phenomenology] {thought} (V={self.valence:.2f}, A={self.arousal:.2f})")
 
             # Inject into Global Workspace (Conscious Access)
             if hasattr(self.core, 'global_workspace') and self.core.global_workspace:
+                # Inject Thought
                 self.core.global_workspace.integrate(
                     content=thought,
                     source="Inner Voice",
                     salience=0.8, # High salience but not overwhelming
                     metadata={"valence": self.valence, "arousal": self.arousal}
                 )
+                # Inject Qualia (if intense)
+                if self.arousal > 0.7:
+                     self.core.global_workspace.integrate(
+                        content=f"Qualia: {qualia}",
+                        source="Phenomenology",
+                        salience=0.9,
+                        metadata={"type": "qualia"}
+                    )
 
         except Exception as e:
             self.core.log(f"⚠️ Phenomenology Error: {e}")
