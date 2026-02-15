@@ -6,6 +6,12 @@ import os
 import logging
 from docs.default_prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT, DAYDREAM_EXTRACTOR_PROMPT as DEFAULT_DAYDREAM_EXTRACTOR_PROMPT
 
+THEME_MAP = {
+    "Cosmo": "cosmo",
+    "Cyborg": "cyborg",
+    "Darkly": "darkly"
+}
+
 class SettingsUI:
     """Mixin for Settings UI tab"""
 
@@ -309,31 +315,41 @@ class SettingsUI:
             cb.grid(row=row, column=col, sticky=tk.W, padx=10, pady=5)
 
     def setup_plugins_tab(self, parent):
-        """Setup the plugins management interface."""
-        if not hasattr(self, 'ai_core') or not self.ai_core.action_manager:
-            ttk.Label(parent, text="AI Core not initialized.").pack(padx=10, pady=10)
-            return
-
-        plugins = self.ai_core.action_manager.get_plugins()
-        
-        if not plugins:
-            ttk.Label(parent, text="No plugins loaded.").pack(padx=10, pady=10)
-            return
-
+        """Setup the plugins management interface container."""
         # Scrollable frame for plugins
         canvas = tk.Canvas(parent)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        self.plugins_scrollable_frame = ttk.Frame(canvas)
 
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        self.plugins_scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=self.plugins_scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        # Add initial label
+        self.plugins_status_label = ttk.Label(self.plugins_scrollable_frame, text="Initializing...")
+        self.plugins_status_label.pack(padx=10, pady=10)
+
+    def refresh_plugins_tab(self):
+        """Refresh the plugins list from AI Core."""
+        # Clear existing
+        for widget in self.plugins_scrollable_frame.winfo_children():
+            widget.destroy()
+
+        if not hasattr(self, 'ai_core') or not self.ai_core.action_manager:
+            ttk.Label(self.plugins_scrollable_frame, text="AI Core not initialized.").pack(padx=10, pady=10)
+            return
+
+        plugins = self.ai_core.action_manager.get_plugins()
+
+        if not plugins:
+            ttk.Label(self.plugins_scrollable_frame, text="No plugins loaded.").pack(padx=10, pady=10)
+            return
+
         for name, info in plugins.items():
-            frame = ttk.LabelFrame(scrollable_frame, text=name)
+            frame = ttk.LabelFrame(self.plugins_scrollable_frame, text=name)
             frame.pack(fill=tk.X, padx=5, pady=5)
             
             var = tk.BooleanVar(value=info['enabled'])
@@ -371,12 +387,7 @@ class SettingsUI:
             self.load_settings_into_ui()
 
             # Apply the loaded theme
-            theme_map = {
-                "Cosmo": "cosmo",
-                "Cyborg": "cyborg",
-                "Darkly": "darkly"
-            }
-            theme_to_apply = theme_map.get(self.settings.get("theme", "Darkly"), self.settings.get("theme", "darkly"))
+            theme_to_apply = THEME_MAP.get(self.settings.get("theme", "Darkly"), self.settings.get("theme", "darkly"))
             self.style.theme_use(theme_to_apply)
 
             # Update connection state based on loaded settings
@@ -432,12 +443,7 @@ class SettingsUI:
             self.save_settings()
 
             # Apply new theme (convert capitalized name to lowercase)
-            theme_map = {
-                "Cosmo": "cosmo",
-                "Cyborg": "cyborg",
-                "Darkly": "darkly"
-            }
-            theme_to_apply = theme_map.get(self.settings["theme"].capitalize(), self.settings["theme"])
+            theme_to_apply = THEME_MAP.get(self.settings["theme"].capitalize(), self.settings["theme"])
             self.style.theme_use(theme_to_apply)
 
             # Update text widget colors

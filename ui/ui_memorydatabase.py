@@ -16,6 +16,9 @@ class MemoryDatabaseUI:
         self.db_page = 0
         self.db_page_size = 50
 
+        # Setup Context Menu
+        self._setup_context_menu()
+
         # Database Notebook (Memories vs Meta-Memories)
         db_notebook = ttk.Notebook(self.database_frame)
         db_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -76,6 +79,34 @@ class MemoryDatabaseUI:
             font=("Segoe UI Emoji", 10) if os.name == 'nt' else ("Arial", 10)
         )
         self.meta_memories_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    def _setup_context_menu(self):
+        """Create right-click context menu for memory trees"""
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="Delete Memory", command=self.delete_selected_memory)
+
+    def _on_tree_right_click(self, event):
+        """Handle right-click on treeview"""
+        tree = event.widget
+        # Select the item under cursor
+        item = tree.identify_row(event.y)
+        if item:
+            tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
+            self.current_context_tree = tree # Keep track of which tree triggered it
+
+    def delete_selected_memory(self):
+        """Delete selected memory from the active tree"""
+        if not hasattr(self, 'current_context_tree') or not self.current_context_tree:
+            return
+
+        selected = self.current_context_tree.selection()
+        if not selected:
+            return
+
+        item_id = self.current_context_tree.set(selected[0], "ID")
+        if item_id:
+            self.delete_memory_action(int(item_id))
 
     def _on_tab_changed(self, event):
         """Handle tab change to show/hide stats label in the header"""
@@ -155,6 +186,14 @@ class MemoryDatabaseUI:
         
         # Bind double-click to expand memory
         tree.bind("<Double-1>", self._on_memory_double_click)
+
+        # Bind right-click
+        if os.name == "nt":
+            tree.bind("<Button-3>", self._on_tree_right_click)
+        else:
+            tree.bind("<Button-3>", self._on_tree_right_click) # Linux/Mac usually Button-3
+            if self.root.tk.call('tk', 'windowingsystem') == 'aqua':
+                 tree.bind("<Button-2>", self._on_tree_right_click) # Mac might use Button-2
 
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -518,66 +557,6 @@ class MemoryDatabaseUI:
         lbl = ttk.Label(card, text=item['text'], wraplength=780, justify=tk.LEFT)
         lbl.pack(fill=tk.X, padx=5, pady=5)
 
-    def _populate_memory_tab(self, parent_frame, items):
-        """Populate a memory tab with sections"""
-        if not items:
-            lbl = ttk.Label(parent_frame, text="🧠 No saved memories.", padding=20)
-            lbl.pack(anchor="center")
-            return
-
-        type_emoji = {
-            "IDENTITY": "👤", "FACT": "📌", "PREFERENCE": "❤️",
-            "GOAL": "🎯", "RULE": "⚖️", "PERMISSION": "✅", "BELIEF": "💭",
-            "NOTE": "📓",
-            "NARRATIVE": "📖",
-            "REFUTED_BELIEF": "🛡️",
-            "COMPLETED_GOAL": "🏁",
-            "SELF-KNOWLEDGE": "🧠"
-        }
-
-        grouped = {}
-        for item in items:
-            # item: (id, type, subject, text, source)
-            _id, mem_type, subject, text = item[:4]
-            grouped.setdefault(mem_type, []).append((_id, subject, text))
-
-        hierarchy = ["NARRATIVE", "NOTE", "SELF-KNOWLEDGE", "PERMISSION", "RULE", "IDENTITY", "PREFERENCE", "GOAL", "COMPLETED_GOAL", "FACT", "BELIEF", "REFUTED_BELIEF"]
-
-        for mem_type in hierarchy:
-            if mem_type in grouped:
-                all_items = grouped[mem_type]
-                total_count = len(all_items)
-                # Limit to latest 50 items per type to prevent lag
-                self._create_memory_section(parent_frame, mem_type, all_items[:50], type_emoji, total_count)
-                del grouped[mem_type]
-
-        for mem_type, remaining in grouped.items():
-            total_count = len(remaining)
-            # Limit to latest 50 items per type
-            self._create_memory_section(parent_frame, mem_type, remaining[:50], type_emoji, total_count)
-
-    def on_memory_right_click(self, event, widget):
-        """Handle right-click on memory text widget"""
-        try:
-            index = widget.index(f"@{event.x},{event.y}")
-            tags = widget.tag_names(index)
-            
-            mem_id = None
-            for tag in tags:
-                if tag.startswith("mem_"):
-                    try:
-                        mem_id = int(tag.split("_")[1])
-                        break
-                    except:
-                        pass
-            
-            if mem_id:
-                menu = tk.Menu(self.root, tearoff=0)
-                menu.add_command(label=f"❌ Delete Memory ID: {mem_id}", command=lambda: self.delete_memory_action(mem_id))
-                menu.tk_popup(event.x_root, event.y_root)
-        except Exception as e:
-            logging.error(f"Right-click error: {e}")
-
     def delete_memory_action(self, mem_id):
         """Delete a memory by ID and refresh view"""
         if not getattr(self, 'memory_store', None):
@@ -592,109 +571,3 @@ class MemoryDatabaseUI:
                     messagebox.showerror("Error", f"Failed to delete memory ID {mem_id}")
             except Exception as e:
                 messagebox.showerror("Error", f"Error deleting memory: {e}")
-
-    def _create_memory_section(self, parent, mem_type, items, type_emoji, total_count=None):
-        """Helper to create a collapsible section for a memory type"""
-        emoji = type_emoji.get(mem_type, "💡")
-        count = len(items)
-        if total_count is None:
-            total_count = count
-
-        if count < total_count:
-            title = f"{emoji} {mem_type} ({count}/{total_count})"
-        else:
-            title = f"{emoji} {mem_type} ({total_count})"
-
-        # Container for the whole section
-        container = ttk.Frame(parent)
-        container.pack(fill=tk.X, expand=False, padx=5, pady=2)
-        
-        # Store items for lazy loading
-        container.items = items
-
-        # Content container (holds canvas + scrollbar)
-        content_container = ttk.Frame(container)
-
-        # Toggle state
-        is_open = tk.BooleanVar(value=True)
-
-        # Lazy load flag
-        is_loaded = False
-
-        def toggle():
-            if is_open.get():
-                content_container.pack_forget()
-                is_open.set(False)
-                toggle_btn.configure(text=f"▶ {title}")
-            else:
-                content_container.pack(fill=tk.X, expand=False, padx=10, pady=5)
-                is_open.set(True)
-                toggle_btn.configure(text=f"▼ {title}")
-                if not is_loaded:
-                    populate_text()
-
-        # Header Button
-        toggle_btn = ttk.Button(
-            container,
-            text=f"▼ {title}",
-            command=toggle,
-            bootstyle="secondary-outline",
-            cursor="hand2"
-        )
-        toggle_btn.pack(fill=tk.X)
-
-        # Pack content initially
-        content_container.pack(fill=tk.X, expand=True, padx=10, pady=5)
-
-        # Use a Text widget for performance (instead of hundreds of Frames)
-        # Calculate height based on type
-        if mem_type in ["NARRATIVE", "NOTE", "IDENTITY", "SELF-KNOWLEDGE"]:
-            # These tend to be longer
-            lines_per_item = 15
-            max_lines = 200 # Increased for longer narratives
-        else:
-            lines_per_item = 3
-            max_lines = 25
-
-        widget_height = min(len(items) * lines_per_item, max_lines)
-        if widget_height < 5: widget_height = 5
-
-        def populate_text():
-            nonlocal is_loaded
-            text_widget = scrolledtext.ScrolledText(
-                content_container,
-                wrap=tk.WORD,
-                height=widget_height,
-                font=("Segoe UI", 10) if os.name == 'nt' else ("Arial", 10),
-                bg="#2b2b2b",
-                fg="white",
-                borderwidth=0,
-                highlightthickness=0
-            )
-            text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-            # Configure tags
-            text_widget.tag_config("header", foreground="#61afef", font=("Segoe UI", 9, "bold"))
-            text_widget.tag_config("content", foreground="#dcdcdc")
-            text_widget.tag_config("separator", foreground="#4e4e4e")
-
-            for _id, subject, text in container.items:
-                header = f"[ID:{_id}] [{subject}]\n"
-                content = f"{text}\n"
-                sep = "-" * 80 + "\n"
-                
-                # Add unique tag for ID
-                mem_tag = f"mem_{_id}"
-                
-                text_widget.insert(tk.END, header, ("header", mem_tag))
-                text_widget.insert(tk.END, content, ("content", mem_tag))
-                text_widget.insert(tk.END, sep, ("separator", mem_tag))
-
-            text_widget.config(state=tk.DISABLED)
-            
-            # Bind right-click
-            text_widget.bind("<Button-3>", lambda e: self.on_memory_right_click(e, text_widget))
-            is_loaded = True
-
-        # Initial population
-        populate_text()

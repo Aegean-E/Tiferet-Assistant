@@ -6,6 +6,7 @@ from tkinter import messagebox
 from datetime import datetime
 import threading
 import os
+import config
 
 class DocumentsUI:
     """Mixin for Documents UI tab"""
@@ -440,7 +441,7 @@ class DocumentsUI:
         # Check for ghost files (files on disk not in DB)
         ghost_files = []
         # Only check the application's specific upload directory
-        upload_dir = "./data/uploaded_docs"
+        upload_dir = config.UPLOADED_DOCS_DIR
         if os.path.exists(upload_dir):
             # Get all filenames in DB (case insensitive for Windows safety)
             db_filenames = {doc[1].lower() for doc in self.original_docs}
@@ -496,7 +497,7 @@ class DocumentsUI:
     def generate_document_report(self):
         """Generate a detailed report of database vs file system state"""
         try:
-            upload_dir = "./data/uploaded_docs"
+            upload_dir = config.UPLOADED_DOCS_DIR
             report_lines = []
             report_lines.append(f"Document System Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             report_lines.append("=" * 60)

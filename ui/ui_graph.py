@@ -4,7 +4,7 @@ from tkinter import messagebox
 import os
 import webbrowser
 import logging
-import tkinter as tk
+import config
 
 class GraphUI:
     """Mixin for Knowledge Graph Visualization"""
@@ -44,8 +44,8 @@ class GraphUI:
             messagebox.showerror("Missing Dependency", "Please install pyvis: pip install pyvis")
             return
 
-        gml_path = "./data/knowledge_graph.gml"
-        html_path = "./data/knowledge_graph.html"
+        gml_path = os.path.join(config.DATA_DIR, "knowledge_graph.gml")
+        html_path = os.path.join(config.DATA_DIR, "knowledge_graph.html")
 
         if not os.path.exists(gml_path):
             messagebox.showinfo("No Graph", "No Knowledge Graph (GML) found. Let Da'at build it first.")
@@ -84,6 +84,6 @@ class GraphUI:
             logging.error(f"Graph Viz Error: {e}")
 
     def open_graph_browser(self):
-        html_path = os.path.abspath("./data/knowledge_graph.html")
+        html_path = os.path.abspath(os.path.join(config.DATA_DIR, "knowledge_graph.html"))
         if os.path.exists(html_path):
             webbrowser.open(f"file://{html_path}")

@@ -626,11 +626,13 @@ class DesktopAssistantUI(DocumentsUI, SettingsUI, MemoryDatabaseUI, GraphUI):
                 self._insert_formatted_line(widget, line + "\n", "normal")
 
     def _insert_formatted_line(self, widget, line, base_tag="normal"):
-        # Regex to capture **bold** and `code`
-        parts = re.split(r'(\*\*.*?\*\*|`.*?`)', line)
+        # Regex to capture **bold**, *italic*, and `code`
+        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`)', line)
         for part in parts:
             if part.startswith("**") and part.endswith("**"):
                 widget.insert(tk.END, part[2:-2], ("bold", base_tag))
+            elif part.startswith("*") and part.endswith("*") and not part.startswith("**"):
+                widget.insert(tk.END, part[1:-1], ("italic", base_tag))
             elif part.startswith("`") and part.endswith("`"):
                 widget.insert(tk.END, part[1:-1], ("code", base_tag))
             else:

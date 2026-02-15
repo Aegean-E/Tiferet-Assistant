@@ -248,6 +248,10 @@ class DesktopAssistantApp(DesktopAssistantUI):
             )
             self.refresh_component_aliases()
             
+            # Update plugins UI now that core is ready
+            if hasattr(self, 'refresh_plugins_tab'):
+                self.refresh_plugins_tab()
+
         except Exception as e:
             messagebox.showerror("Initialization Error", f"Failed to initialize AI Core:\n{e}")
 
