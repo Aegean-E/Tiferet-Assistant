@@ -5,6 +5,7 @@ Responsible for grounding AI reasoning in physical reality via simulation and ca
 
 import os
 import json
+import ast
 import time
 import logging
 import math
@@ -318,6 +319,64 @@ class Malkuth:
         self.log(f"📝 [Malkuth] Edited Assistant Note (ID: {mem_id} -> {mid}): {content}")
         if hasattr(self.meta_memory_store, 'add_event'):
             self.meta_memory_store.add_event("MEMORY_EDITED", "Assistant", f"Edited Note {mem_id} -> {mid}")
+
+    def write_plugin(self, filename: str, content: str) -> str:
+        """
+        Write a Python plugin to the 'plugins' directory with strict safety checks.
+        """
+        if self.output_locked:
+            self.log("🛑 Malkuth: Output locked. Cannot write plugin.")
+            return "Error: System Panic Active. Output Locked."
+
+        # 1. Basic Validation
+        if not filename.endswith(".py"):
+            return "Error: Plugin filename must end with .py"
+
+        # 2. AST Safety Analysis
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as e:
+            return f"Error: Invalid Python syntax: {e}"
+
+        dangerous_imports = {'os', 'sys', 'subprocess', 'shutil', 'socket', 'importlib', 'pickle', 'marshal', 'ctypes'}
+        dangerous_calls = {'eval', 'exec', 'compile', 'open', '__import__', 'input'}
+
+        for node in ast.walk(tree):
+            # Check imports
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import):
+                    names = [n.name.split('.')[0] for n in node.names]
+                else:
+                    names = [node.module.split('.')[0]] if node.module else []
+
+                for name in names:
+                    if name in dangerous_imports:
+                        return f"Error: Import of '{name}' is forbidden for safety."
+
+            # Check calls
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id in dangerous_calls:
+                        return f"Error: Call to '{node.func.id}' is forbidden."
+                elif isinstance(node.func, ast.Attribute):
+                    # Check for things like os.system (though import os is blocked, this catches aliases if missed)
+                    if hasattr(node.func.value, 'id') and node.func.value.id in dangerous_imports:
+                        return f"Error: Call to '{node.func.value.id}.{node.func.attr}' is forbidden."
+
+        # 3. Write File
+        plugins_dir = os.path.abspath("./plugins")
+        os.makedirs(plugins_dir, exist_ok=True)
+
+        safe_filename = os.path.basename(filename)
+        file_path = os.path.join(plugins_dir, safe_filename)
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            self.log(f"🔌 [Malkuth] Created new plugin: {safe_filename}")
+            return f"Success: Plugin '{safe_filename}' created. You must ENABLE it in settings to use it."
+        except Exception as e:
+            return f"Error writing plugin file: {e}"
 
     def write_file(self, filename: str, content: str) -> str:
         """Write content to a file in the 'works' directory."""

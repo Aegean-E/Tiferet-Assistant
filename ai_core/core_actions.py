@@ -5,6 +5,7 @@ import os
 import traceback
 from datetime import datetime
 from .lm import run_local_lm
+from .utils import parse_json_object_loose
 import threading
 import concurrent.futures
 import sys
@@ -45,6 +46,11 @@ class ActionManager:
             "SEARCH": lambda q="": self.safe_search(q or "", "WEB"), # Now maps to DuckDuckGo
             "WIKI": lambda q="": self.safe_search(q or "", "WIKIPEDIA"),
             "FIND_PAPER": lambda q="": self.safe_search(q or "", "ARXIV"),
+
+            # 3. Self Modification Tools
+            "CREATE_PLUGIN": lambda q: self._create_plugin_tool(q),
+            "UPDATE_SETTINGS": lambda q: self._update_settings_tool(q),
+            "ENABLE_PLUGIN": lambda q: self._enable_plugin_tool(q),
         }
         
         # Add enabled dynamic tools
@@ -466,3 +472,96 @@ class ActionManager:
         except Exception as e:
             self.core.log(f"⚠️ LLM Call Failed: {e}")
             return f"⚠️ Observation: LLM Call Failed ({e}). Action Suggestion: Check model connection or reduce prompt size."
+
+    def _create_plugin_tool(self, args: str) -> str:
+        """
+        Wrapper for Malkuth.write_plugin.
+        Args: "filename, content"
+        """
+        if not self.core.malkuth:
+            return "Malkuth not available."
+        if "," not in args:
+            return "Error: CREATE_PLUGIN requires 'filename, content'"
+        filename, content = args.split(",", 1)
+        filename = filename.strip()
+        content = content.strip()
+
+        # Remove quotes if present
+        if (filename.startswith('"') and filename.endswith('"')) or (filename.startswith("'") and filename.endswith("'")):
+             filename = filename[1:-1]
+
+        return self.core.malkuth.write_plugin(filename, content)
+
+    def _update_settings_tool(self, args: str) -> str:
+        """
+        Update system settings.
+        Args: "key, value" or JSON string
+        """
+        allowed_keys = {
+            "system_prompt", "temperature", "top_p",
+            "daydream_cycle_limit", "max_tokens", "memory_extractor_prompt"
+        }
+
+        try:
+            # Try parsing as JSON first
+            if args.strip().startswith("{"):
+                updates = parse_json_object_loose(args)
+            elif "," in args:
+                k, v = args.split(",", 1)
+                updates = {k.strip(): v.strip()}
+            else:
+                return "Error: format must be 'key, value' or JSON object."
+
+            # Validation
+            filtered_updates = {}
+            for k, v in updates.items():
+                if k in allowed_keys:
+                    # Type casting
+                    try:
+                        if k in ["temperature", "top_p"]:
+                            filtered_updates[k] = float(v)
+                        elif k in ["daydream_cycle_limit", "max_tokens"]:
+                            filtered_updates[k] = int(v)
+                        else:
+                            filtered_updates[k] = str(v)
+                    except ValueError:
+                        return f"Error: Invalid type for setting '{k}'"
+                else:
+                    return f"Error: Setting '{k}' is not allowed to be modified."
+
+            if not filtered_updates:
+                return "Error: No valid settings to update."
+
+            # Apply updates
+            self.core.update_settings(filtered_updates)
+            return f"Settings updated: {list(filtered_updates.keys())}"
+
+        except Exception as e:
+            return f"Error updating settings: {e}"
+
+    def _enable_plugin_tool(self, plugin_name: str) -> str:
+        """
+        Enable a plugin in settings.
+        """
+        plugin_name = plugin_name.strip().replace('"', '').replace("'", "")
+        if not plugin_name:
+            return "Error: Plugin name required."
+
+        # Check if file exists
+        plugin_path = os.path.join(os.path.abspath("./plugins"), f"{plugin_name}.py")
+        if not os.path.exists(plugin_path):
+             return f"Error: Plugin file '{plugin_name}.py' not found in plugins directory."
+
+        current_settings = self.core.get_settings()
+        plugin_config = current_settings.get("plugin_config", {}).copy()
+
+        if plugin_config.get(plugin_name, False):
+            return f"Plugin '{plugin_name}' is already enabled."
+
+        plugin_config[plugin_name] = True
+        self.core.update_settings({"plugin_config": plugin_config})
+
+        # Reload plugins
+        self.load_plugins()
+
+        return f"Plugin '{plugin_name}' enabled and loaded."
