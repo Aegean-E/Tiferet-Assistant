@@ -77,7 +77,7 @@ class GlobalWorkspace:
         # 3. Sensory Input (External Stimulus)
         last_interaction = 0
         if self.core.self_model:
-             last_interaction = self.core.self_model.data.get("last_user_interaction", 0)
+             last_interaction = self.core.self_model.get_last_interaction()
              
         time_since_chat = time.time() - last_interaction
         if time_since_chat < 60:
