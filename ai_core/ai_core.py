@@ -8,6 +8,7 @@ import concurrent.futures
 from types import SimpleNamespace
 from typing import Dict, Callable, Optional, List, Any
 
+import config
 from .lm import compute_embedding, run_local_lm, configure_lm
 
 from .core_autonomy import AutonomyManager
@@ -207,7 +208,7 @@ class AICore:
 
     def backup_databases(self):
         """Create a timestamped backup of all SQLite databases."""
-        backup_dir = self.get_settings().get("backup_dir", "./data/backups")
+        backup_dir = self.get_settings().get("backup_dir", config.BACKUPS_DIR)
         os.makedirs(backup_dir, exist_ok=True)
         
         timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -220,7 +221,7 @@ class AICore:
         
         self.log(f"💾 AICore: Starting database backup to {backup_dir}...")
         for db_file in db_files:
-            src = os.path.join("./data", db_file)
+            src = os.path.join(config.DATA_DIR, db_file)
             if os.path.exists(src):
                 dst = os.path.join(backup_dir, f"{os.path.splitext(db_file)[0]}_{timestamp}.sqlite3")
                 try:

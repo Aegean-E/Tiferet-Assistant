@@ -53,5 +53,6 @@
   },
   "plugin_config": {},
   "faiss_save_threshold": 50,
-  "version": 1.1
+  "version": 1.2,
+  "epigenetics_path": "./data/epigenetics.json"
 }
