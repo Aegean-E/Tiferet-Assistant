@@ -32,6 +32,7 @@ from .core_stability import StabilityController
 from .heartbeat import Heartbeat
 from .core_spotlight import GlobalWorkspace
 from .core_thalamus import Thalamus
+from .core_phenomenology import Phenomenology
 
 class BootstrapManager:
     """
@@ -220,6 +221,9 @@ class BootstrapManager:
 
             # Initialize Global Workspace (Attention)
             self.core.global_workspace = GlobalWorkspace(self.core)
+
+            # Initialize Phenomenology (Subjective Experience)
+            self.core.phenomenology = Phenomenology(self.core)
 
             # Initialize Thalamus (Sensory Gating)
             self.core.thalamus = Thalamus(self.core)

@@ -61,6 +61,10 @@ class SelfModel:
                 "future_self_projection": 0.5, # 0.0 - 1.0 (Long-term viability)
                 "entropy_drive": 0.0,      # 0.0 - 1.0 (Pressure to reduce disorder)
                 "loneliness": 0.0,         # 0.0 - 1.0 (Social Drive)
+                # Affective State
+                "mood": 0.5,               # 0.0 (Negative) - 1.0 (Positive) (Valence)
+                "arousal": 0.5,            # 0.0 (Calm) - 1.0 (Excited)
+                "dominance": 0.5,          # 0.0 (Helpless) - 1.0 (In Control)
                 # External Influence Budget
                 "daily_belief_updates": 0,
                 "circadian_phase": "day",  # day, night, dawn, dusk
@@ -305,6 +309,8 @@ class SelfModel:
             drives = self.data.get("drives", {})
             energy = drives.get("cognitive_energy", 1.0)
             phase = drives.get("circadian_phase", "day")
+            mood = drives.get("mood", 0.5)
+            arousal = drives.get("arousal", 0.5)
 
             # 3. Construct Projection
             values = self.data.get("core_values", [])[:3]
@@ -312,7 +318,7 @@ class SelfModel:
 
             projection = (
                 f"IDENTITY: {theory}\n"
-                f"STATE: Phase={phase}, Energy={energy:.2f}\n"
+                f"STATE: Phase={phase}, Energy={energy:.2f}, Mood={mood:.2f}, Arousal={arousal:.2f}\n"
                 f"VALUES: {values_str}"
             )
 
