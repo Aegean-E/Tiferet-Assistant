@@ -371,13 +371,59 @@ class ActionManager:
         except Exception as e:
             return f"Error reading chunk: {e}"
 
+    def _validate_path(self, path: str, allow_write: bool = False) -> str:
+        """
+        Validates a file path for security.
+        Returns the absolute path if safe, raises ValueError if unsafe.
+        """
+        # 1. Resolve Path
+        abs_path = os.path.abspath(path)
+        real_path = os.path.realpath(abs_path) # Resolve symlinks
+
+        # 2. Define Safe Directories
+        # We allow reading from DATA_DIR and ./works
+        # We allow writing ONLY to ./works (and strictly checked)
+
+        root_dir = os.path.abspath(".") # Assuming CWD is root
+        data_dir = os.path.join(root_dir, "data")
+        works_dir = os.path.join(root_dir, "works")
+
+        allowed_read_roots = [data_dir, works_dir]
+        allowed_write_roots = [works_dir]
+
+        # Check roots
+        is_safe_root = False
+        roots = allowed_write_roots if allow_write else allowed_read_roots
+
+        for root in roots:
+            if os.path.commonpath([root, real_path]) == root:
+                is_safe_root = True
+                break
+
+        if not is_safe_root:
+            raise ValueError(f"Access denied: Path '{path}' is outside allowed directories.")
+
+        # 3. Extension Check (if writing)
+        if allow_write:
+            blocked_exts = {'.py', '.sh', '.exe', '.bat', '.cmd', '.js', '.php', '.pl'}
+            ext = os.path.splitext(real_path)[1].lower()
+            if ext in blocked_exts:
+                raise ValueError(f"Access denied: File type '{ext}' is blocked.")
+
+        return real_path
+
     def _describe_image_tool(self, image_path: str) -> str:
         """
         Tool wrapper for Malkuth's vision capability.
         """
         if not self.core.malkuth:
             return "Malkuth (Vision) not available."
-        return self.core.malkuth.describe_image(image_path)
+
+        try:
+            safe_path = self._validate_path(image_path, allow_write=False)
+            return self.core.malkuth.describe_image(safe_path)
+        except Exception as e:
+            return f"Error: {e}"
 
     def _write_file_tool(self, args: str) -> str:
         """
@@ -389,7 +435,20 @@ class ActionManager:
         if "," not in args:
             return "Error: WRITE_FILE requires 'filename, content'"
         filename, content = args.split(",", 1)
-        return self.core.malkuth.write_file(filename.strip(), content.strip())
+
+        try:
+            # Construct expected path (Malkuth logic)
+            works_dir = os.path.abspath("./works")
+            safe_filename = os.path.basename(filename.strip())
+            expected_path = os.path.join(works_dir, safe_filename)
+
+            # Validate extension and directory
+            self._validate_path(expected_path, allow_write=True)
+
+            # Pass safe_filename to Malkuth to enforce the path we validated
+            return self.core.malkuth.write_file(safe_filename, content.strip())
+        except Exception as e:
+            return f"Error: {e}"
 
     def _run_llm_regulated(self, *args, **kwargs):
         """
