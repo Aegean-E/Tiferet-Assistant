@@ -97,7 +97,7 @@ class GoalManager:
         # 4. Run the thought loop (This triggers [EXECUTE: ...])
         response = run_local_lm(
             messages=[{"role": "system", "content": system_injection}],
-            system_prompt=self.decider.get_settings().get("system_prompt")
+            system_prompt=self.decider.get_system_prompt()
         )
 
         return response
@@ -122,7 +122,7 @@ class GoalManager:
 
         response = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a strategic planner.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a strategic planner.",
             base_url=settings.get("base_url"),
             chat_model=settings.get("chat_model")
         )
@@ -203,7 +203,7 @@ class GoalManager:
         settings = self.decider.get_settings()
         response = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are the Will of the System.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are the Will of the System.",
             base_url=settings.get("base_url"),
             chat_model=settings.get("chat_model")
         )
@@ -244,7 +244,7 @@ class GoalManager:
         for attempt in range(retries + 1):
             response = run_local_lm(
                 messages=[{"role": "user", "content": prompt}],
-                system_prompt="You are the Strategic Planner.",
+                system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are the Strategic Planner.",
                 base_url=settings.get("base_url"),
                 chat_model=settings.get("chat_model")
             )

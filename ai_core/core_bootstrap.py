@@ -603,7 +603,8 @@ class BootstrapManager:
                 stability_controller=self.core.stability_controller,
                 heartbeat=self.core.heartbeat,
                 global_workspace=self.core.global_workspace,
-                executor=self.core.thread_pool
+                executor=self.core.thread_pool,
+                self_model=self.core.self_model
             )
 
             # ... (Event Bus Wiring) ...

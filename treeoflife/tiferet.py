@@ -65,10 +65,12 @@ class Decider:
         stability_controller=None,
         heartbeat=None,
         global_workspace=None,
-        executor=None
+        executor=None,
+        self_model=None
     ):
         self.get_settings = get_settings_fn
         self.update_settings = update_settings_fn
+        self.self_model = self_model
         self.memory_store = memory_store
         self.document_store = document_store
         self.reasoning_store = reasoning_store
@@ -154,6 +156,24 @@ class Decider:
             self.event_bus.subscribe("CONSCIOUS_CONTENT", self._on_conscious_content, priority=10)
 
     # --- Properties and State Adjustments ---
+
+    def get_system_prompt(self) -> str:
+        """
+        Retrieve the dynamic system prompt, injecting Identity and State.
+        """
+        base_prompt = self.get_settings().get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+
+        if self.yesod:
+            return self.yesod.get_dynamic_system_prompt(base_prompt)
+        elif self.self_model:
+            # Fallback: simple injection if Yesod is missing
+            try:
+                projection = self.self_model.project_self()
+                return f"{base_prompt}\n\nCURRENT SELF REPORT:\n{projection}"
+            except Exception as e:
+                self.log(f"⚠️ Failed to project self: {e}")
+                return base_prompt
+        return base_prompt
 
     def increase_temperature(self, amount: float = None):
         """Increase temperature by specified amount (percentage) up to 20%."""

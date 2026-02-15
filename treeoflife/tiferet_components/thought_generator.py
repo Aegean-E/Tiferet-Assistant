@@ -78,7 +78,7 @@ class ThoughtGenerator:
 
         response = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Meta-Cognitive Planner.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a Meta-Cognitive Planner.",
             max_tokens=20,
             temperature=0.1,
             base_url=self.decider.get_settings().get("base_url"),
@@ -185,7 +185,7 @@ class ThoughtGenerator:
 
         summary = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Master Synthesizer. You distill complex reasoning into clarity.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a Master Synthesizer. You distill complex reasoning into clarity.",
             temperature=0.3,
             max_tokens=400,
             base_url=settings.get("base_url"),
@@ -207,7 +207,7 @@ class ThoughtGenerator:
 
         chain = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Logical Engine. You think in straight, unbreakable lines of cause and effect.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a Logical Engine. You think in straight, unbreakable lines of cause and effect.",
             max_tokens=800,
             base_url=self.decider.get_settings().get("base_url"),
             chat_model=self.decider.get_settings().get("chat_model"),
@@ -238,7 +238,7 @@ class ThoughtGenerator:
         )
         axioms = run_local_lm(
             messages=[{"role": "user", "content": deconstruct_prompt}],
-            system_prompt="You are a First Principles Thinker. You strip away the noise to find the signal.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a First Principles Thinker. You strip away the noise to find the signal.",
             max_tokens=400,
             base_url=self.decider.get_settings().get("base_url"),
             chat_model=self.decider.get_settings().get("chat_model")
@@ -257,7 +257,7 @@ class ThoughtGenerator:
 
         conclusion = run_local_lm(
             messages=[{"role": "user", "content": reconstruct_prompt}],
-            system_prompt="You are a First Principles Thinker. You build solid structures from bedrock truth.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a First Principles Thinker. You build solid structures from bedrock truth.",
             max_tokens=600,
             base_url=self.decider.get_settings().get("base_url"),
             chat_model=self.decider.get_settings().get("chat_model")
@@ -333,7 +333,7 @@ class ThoughtGenerator:
 
             response = run_local_lm(
                 messages=[{"role": "user", "content": prompt}],
-                system_prompt="You are a Generator. You explore possibilities.",
+                system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a Generator. You explore possibilities.",
                 temperature=0.7,
                 max_tokens=400,
                 base_url=settings.get("base_url"),
@@ -366,7 +366,7 @@ class ThoughtGenerator:
 
                 score_str = run_local_lm(
                     messages=[{"role": "user", "content": eval_prompt}],
-                    system_prompt="You are an Evaluator. You judge the quality of thoughts.",
+                    system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are an Evaluator. You judge the quality of thoughts.",
                     temperature=0.1,
                     max_tokens=100,
                     base_url=settings.get("base_url"),
@@ -441,7 +441,7 @@ class ThoughtGenerator:
 
         reflection = run_local_lm(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Self-Aware AI. You are honest with yourself.",
+            system_prompt=f"{self.decider.get_system_prompt()}\n\nROLE: You are a Self-Aware AI. You are honest with yourself.",
             max_tokens=300,
             base_url=self.decider.get_settings().get("base_url"),
             chat_model=self.decider.get_settings().get("chat_model")
