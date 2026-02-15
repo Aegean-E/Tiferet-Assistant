@@ -6,7 +6,7 @@ import sys
 import os
 
 # Ensure repo root is in path
-sys.path.append(os.getcwd())
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import ai_core.lm to ensure it's loaded and patchable
 import ai_core.lm

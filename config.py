@@ -1,8 +1,9 @@
 import os
 
 # Base Paths
-SETTINGS_FILE_PATH = "./settings.json"
-DATA_DIR = "./data"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_FILE_PATH = os.path.join(BASE_DIR, "settings.json")
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
 # Data Subdirectories
 TEMP_UPLOADS_DIR = os.path.join(DATA_DIR, "temp_uploads")

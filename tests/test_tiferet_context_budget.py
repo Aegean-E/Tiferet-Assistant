@@ -4,7 +4,7 @@ import sys
 import os
 
 # Ensure repo root is in path
-sys.path.append(os.getcwd())
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from treeoflife.tiferet import Decider
 
