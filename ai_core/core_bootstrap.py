@@ -424,20 +424,55 @@ class BootstrapManager:
 
             def read_document_wrapper(target):
                 try:
+                    # Parse target and chunk index
+                    target_str = str(target).strip()
+                    start_chunk = 0
+
+                    # Handle "filename, chunk_index" format
+                    if "," in target_str:
+                        parts = target_str.rsplit(",", 1)
+                        if parts[1].strip().isdigit():
+                            target_str = parts[0].strip()
+                            start_chunk = int(parts[1].strip())
+
+                    # Find Document
                     doc_id = None
-                    try: doc_id = int(str(target).strip())
-                    except: pass
+                    if target_str.isdigit():
+                        doc_id = int(target_str)
+
                     docs = self.core.document_store.list_documents(limit=1000)
                     selected_doc = None
-                    if doc_id: selected_doc = next((d for d in docs if d[0] == doc_id), None)
+
+                    if doc_id:
+                        selected_doc = next((d for d in docs if d[0] == doc_id), None)
+
                     if not selected_doc:
-                        target_lower = str(target).lower().strip()
+                        target_lower = target_str.lower()
                         selected_doc = next((d for d in docs if target_lower in d[1].lower()), None)
-                    if not selected_doc: return f"❌ Document '{target}' not found."
+
+                    if not selected_doc: return f"❌ Document '{target_str}' not found."
+
+                    # Get Chunks
                     chunks = self.core.document_store.get_document_chunks(selected_doc[0])
                     if not chunks: return f"⚠️ Document '{selected_doc[1]}' is empty."
-                    preview = "\n\n".join([c['text'] for c in chunks[:5]])
-                    return f"📄 Content of '{selected_doc[1]}' (First 5 chunks):\n{preview}"
+
+                    # Validate Index
+                    total_chunks = len(chunks)
+                    if start_chunk >= total_chunks:
+                        return f"⚠️ Chunk index {start_chunk} out of range (Total: {total_chunks})."
+
+                    # Slice Chunks (Read 5 at a time)
+                    BATCH_SIZE = 5
+                    end_chunk = min(start_chunk + BATCH_SIZE, total_chunks)
+                    preview_chunks = chunks[start_chunk:end_chunk]
+
+                    preview = "\n\n".join([f"[Chunk {c['chunk_index']}] {c['text']}" for c in preview_chunks])
+
+                    footer = ""
+                    if end_chunk < total_chunks:
+                        footer = f"\n\n[To read more: [READ_DOC: {selected_doc[1]}, {end_chunk}]]"
+
+                    return f"📄 Content of '{selected_doc[1]}' (Chunks {start_chunk}-{end_chunk-1} of {total_chunks}):\n{preview}{footer}"
                 except Exception as e: return f"❌ Error reading document: {e}"
 
             def search_memory_wrapper(query):
