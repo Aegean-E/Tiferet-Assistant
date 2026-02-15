@@ -42,7 +42,7 @@ class DriveSystem:
         loneliness = drives.get("loneliness", 0.0)
         # We calculate drift based on time since last interaction, but here we just apply incremental drift
         # Actually, let's recalculate based on absolute time since interaction for accuracy
-        last_interaction = self.core.self_model.data.get("last_user_interaction", 0)
+        last_interaction = self.core.self_model.get_last_interaction()
         if last_interaction > 0:
             hours_since = (now - last_interaction) / 3600.0
             social_drift = epi.get("loneliness_drift", 0.1) # 10% per hour

@@ -259,6 +259,10 @@ class SelfModel:
             self.data["last_user_interaction"] = float(time.time())
             self.dirty = True
 
+    def get_last_interaction(self) -> float:
+        with self.lock:
+            return self.data.get("last_user_interaction", 0.0)
+
     def get_drives(self) -> Dict[str, Any]:
         with self.lock:
             return self.data["drives"].copy()
