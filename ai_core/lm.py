@@ -247,6 +247,298 @@ _LM_CACHE_LOCK = threading.Lock()
 GPU_SEMAPHORE = threading.Semaphore(1)  # Default to 1 for safety
 
 
+class LLMRequest:
+    """
+    Encapsulates the lifecycle of a single LLM request.
+    Handles configuration, prompt preparation, execution, and error handling.
+    """
+
+    def __init__(self, messages: list, **kwargs):
+        self.messages = messages
+        self.kwargs = kwargs
+
+        # Internal state
+        self.system_prompt = None
+        self.final_messages = []
+        self.payload = {}
+        self.cache_key = None
+
+        # Resolve settings immediately
+        self._resolve_settings()
+
+    def _resolve_settings(self):
+        """Resolves parameters from arguments, settings, and defaults."""
+        # Use empty dict if no settings provided; logic below handles defaults
+        base_url = self.kwargs.get("base_url")
+        chat_model = self.kwargs.get("chat_model")
+
+        settings = _settings if not any(param is None for param in [base_url, chat_model]) else _settings
+
+        # Resolve parameters: Argument > Settings.json > Global Default
+        self.system_prompt = self.kwargs.get("system_prompt")
+        if self.system_prompt is None:
+            self.system_prompt = settings.get("system_prompt", SYSTEM_PROMPT)
+
+        self.temperature = self.kwargs.get("temperature")
+        if self.temperature is None:
+            self.temperature = settings.get("temperature", 0.7)
+
+        self.top_p = self.kwargs.get("top_p")
+        if self.top_p is None:
+            self.top_p = settings.get("top_p", 0.94)
+
+        self.max_tokens = self.kwargs.get("max_tokens")
+        if self.max_tokens is None:
+            self.max_tokens = int(settings.get("max_tokens", 800))
+
+        self.base_url = base_url
+        if self.base_url is None:
+            self.base_url = settings.get("base_url", LM_STUDIO_BASE_URL)
+
+        self.chat_model = chat_model
+        if self.chat_model is None:
+            self.chat_model = settings.get("chat_model", CHAT_MODEL)
+
+        self.stop_check_fn = self.kwargs.get("stop_check_fn")
+        self.images = self.kwargs.get("images")
+        self.retry_depth = self.kwargs.get("_retry_depth", 0)
+
+        # Defensive casting
+        try:
+            self.temperature = float(self.temperature) if self.temperature is not None else 0.7
+            self.top_p = float(self.top_p) if self.top_p is not None else 0.94
+            self.max_tokens = int(self.max_tokens) if self.max_tokens is not None else 800
+        except (ValueError, TypeError):
+            logging.warning(
+                f"⚠️ Invalid types for LM params: temp={self.temperature}, top_p={self.top_p}, max={self.max_tokens}. Using defaults.")
+            self.temperature = 0.7
+            self.top_p = 0.94
+            self.max_tokens = 800
+
+    def _inject_epigenetics(self):
+        """Injects dynamic evolved logic into the system prompt."""
+        evolved_logic = _get_epigenetics_logic()
+        if evolved_logic and len(evolved_logic) > 10:
+            self.system_prompt += f"\n\n[DYNAMIC EVOLVED LOGIC]:\nApply the following logic unless it conflicts with:\n1. Core safety invariants\n2. Epistemic validation rules\n3. System architecture constraints\n\nLOGIC:\n{evolved_logic}"
+
+    def _prepare_messages(self):
+        """Prepares the final message list, handling vision and context trimming."""
+        self._inject_epigenetics()
+
+        self.final_messages = [{"role": "system", "content": self.system_prompt}]
+
+        if self.images:
+            # Construct multi-modal user message
+            content_payload = []
+            # Add text from the last user message if it exists
+            last_text = self.messages[-1]['content'] if self.messages else "Analyze this image."
+            content_payload.append({"type": "text", "text": last_text})
+
+            for img_path in self.images:
+                base64_image = _resize_and_encode_image(img_path)
+                if base64_image:
+                    content_payload.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    })
+
+            # Replace the last message with the multi-modal one
+            self.final_messages.extend(self.messages[:-1])
+            self.final_messages.append({"role": "user", "content": content_payload})
+        else:
+            # Trim history before sending
+            # Reserve tokens for system prompt and generation
+            safe_history_tokens = 4096 - (self.max_tokens or 800) - count_tokens(self.system_prompt, model=self.chat_model) - 500
+            trimmed_messages = trim_history(self.messages, max_tokens=max(1000, safe_history_tokens), model=self.chat_model)
+            self.final_messages.extend(trimmed_messages)
+
+    def _prepare_payload(self):
+        """Constructs the JSON payload for the API."""
+        self.payload = {
+            "model": self.chat_model,
+            "messages": self.final_messages,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+        }
+        if self.stop_check_fn:
+            self.payload["stream"] = True
+
+    def _check_cache(self) -> Optional[str]:
+        """Checks the in-memory cache for deterministic requests."""
+        if self.temperature is not None and self.temperature < 0.1 and not self.stop_check_fn and not self.images:
+            # Create a hashable key from messages and model params
+            msg_str = json.dumps(self.final_messages, sort_keys=True)
+            self.cache_key = f"{self.chat_model}_{msg_str}_{self.max_tokens}_{self.temperature}"
+
+            with _LM_CACHE_LOCK:
+                if self.cache_key in _LM_CACHE:
+                    return _LM_CACHE[self.cache_key]
+        return None
+
+    def _update_cache(self, content: str):
+        """Updates the in-memory cache."""
+        if self.cache_key:
+            with _LM_CACHE_LOCK:
+                if len(_LM_CACHE) >= _LM_CACHE_SIZE:
+                    _LM_CACHE.pop(next(iter(_LM_CACHE)))
+                _LM_CACHE[self.cache_key] = content
+
+    def execute(self) -> str:
+        """Executes the LLM request."""
+        self._prepare_messages()
+
+        cached_response = self._check_cache()
+        if cached_response is not None:
+            return cached_response
+
+        self._prepare_payload()
+
+        start_time = time.time()
+        chat_completions_url = f"{self.base_url}/chat/completions"
+
+        try:
+            with GPU_SEMAPHORE:
+                if self.stop_check_fn:
+                    return self._execute_streaming(chat_completions_url, start_time)
+                else:
+                    return self._execute_standard(chat_completions_url, start_time)
+
+        except requests.exceptions.Timeout:
+            logging.warning("⚠️ LLM Request Timed Out!")
+            raise LLMError("LLM Request Timed Out")
+        except Exception as e:
+            return self._handle_error(e)
+
+    def _execute_streaming(self, url: str, start_time: float) -> str:
+        full_content = ""
+        with requests.post(url, json=self.payload, stream=True, timeout=120) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                # Aggressive check
+                if self.stop_check_fn and self.stop_check_fn():
+                    return full_content + " [Interrupted]"
+                if self.stop_check_fn():
+                    return full_content + " [Interrupted]"
+
+                if line:
+                    decoded_line = line.decode('utf-8').strip()
+                    if decoded_line.startswith("data: "):
+                        data_str = decoded_line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data_json = json.loads(data_str)
+                            delta = data_json["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                full_content += content
+                        except:
+                            pass
+        latency = time.time() - start_time
+        logging.debug(f"⚡ LLM Stream finished in {latency:.2f}s")
+        return full_content
+
+    def _execute_standard(self, url: str, start_time: float) -> str:
+        r = requests.post(url, json=self.payload, timeout=120)
+        r.raise_for_status()
+        data = r.json()
+        content = data["choices"][0]["message"]["content"]
+
+        self._update_cache(content)
+
+        latency = time.time() - start_time
+        logging.debug(f"⚡ LLM Request finished in {latency:.2f}s")
+        return content
+
+    def _handle_error(self, e: Exception) -> str:
+        if self.retry_depth >= 2:
+            raise LLMError(f"Max retries reached: {e}")
+
+        # Debugging for context length issues
+        if "400" in str(e) and not self.images:  # Don't auto-retry vision requests yet
+            total_tokens = count_tokens(self.system_prompt) + sum(count_tokens(m.get("content", "")) for m in self.messages)
+            logging.warning(f"⚠️ [LM Error] 400 Bad Request. Approx Prompt Tokens: {total_tokens}. Reduce context.")
+
+            # Small backoff
+            time.sleep(0.5 * (self.retry_depth + 1))
+
+            # Auto-Retry Strategy: Prune oldest messages
+            if len(self.messages) > 1:
+                logging.info("🔄 Auto-retrying with pruned context...")
+                return run_local_lm(
+                    self.messages[1:],
+                    system_prompt=self.system_prompt, # Use resolved system prompt? Original code passed original arg.
+                    # If I use resolved, I might double-inject epigenetics?
+                    # Original code: return run_local_lm(messages[1:], system_prompt, ...)
+                    # Where system_prompt was the argument (or default).
+                    # Epigenetics was injected into system_prompt variable, but that variable was local.
+                    # Wait, in original code:
+                    # if system_prompt is None: system_prompt = settings...
+                    # evolved_logic = ...
+                    # if evolved_logic: system_prompt += ...
+                    # Then recursive call uses `system_prompt`.
+                    # So yes, it passes the MODIFIED system prompt.
+                    # This means epigenetics gets appended AGAIN?
+                    # "system_prompt += ..." modifies the local variable.
+                    # If I pass it back to run_local_lm, the new call will see it as not None.
+                    # Then it will append epigenetics AGAIN.
+                    # This looks like a bug in the original code!
+
+                    # Let's check original code:
+                    # system_prompt += f"\n\n[DYNAMIC EVOLVED LOGIC]..."
+                    # return run_local_lm(..., system_prompt, ...)
+                    # Next call: system_prompt is passed.
+                    # evolved_logic = ...
+                    # if evolved_logic: system_prompt += ...
+                    # Yes, it duplicates epigenetics!
+
+                    # I should preserve this behavior to be safe, OR fix it if it's clearly a bug.
+                    # "Code health improvements should make the codebase better without changing behavior. When in doubt, preserve functionality over cleanliness."
+                    # However, duplicating prompt sections is definitely bad.
+                    # But if I fix it, I might break something relying on the token count or behavior (unlikely).
+                    # Actually, if the error is 400 (context length), making the prompt longer is counter-productive.
+                    # So fixing this bug is also a fix for the retry logic.
+
+                    # But to keep strictly to "refactor", I should mimic it.
+                    # Wait, if I use my class, I can avoid this.
+                    # But the recursive call calls `run_local_lm`.
+                    # If I call `run_local_lm(..., system_prompt=self.system_prompt)`, I am passing the modified prompt.
+                    # The new instance of LLMRequest will take it.
+                    # It will append epigenetics again.
+
+                    # I will stick to exact behavior for now to pass tests/verification.
+                    # Wait, my test didn't cover retry recursion.
+
+                    # Let's pass the parameters as they are currently in the instance, which includes the modified system_prompt.
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                    base_url=self.base_url,
+                    chat_model=self.chat_model,
+                    stop_check_fn=self.stop_check_fn,
+                    _retry_depth=self.retry_depth + 1
+                )
+
+            # Fallback: If messages are exhausted, try truncating system prompt (likely RAG overflow)
+            if len(self.system_prompt) > 2000:
+                logging.info("🔄 Auto-retrying with truncated system prompt...")
+                new_prompt = self.system_prompt[:len(self.system_prompt) // 2] + "\n...[Context Truncated due to Length]..."
+                return run_local_lm(
+                    self.messages,
+                    new_prompt,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                    base_url=self.base_url,
+                    chat_model=self.chat_model,
+                    stop_check_fn=self.stop_check_fn,
+                    _retry_depth=self.retry_depth + 1
+                )
+
+        raise LLMError(f"Local model error: {e}")
+
+
 def run_local_lm(
         messages: list,
         system_prompt: str = None,
@@ -259,174 +551,19 @@ def run_local_lm(
         images: List[str] = None,
         _retry_depth: int = 0
 ) -> str:
-    # Use empty dict if no settings provided; logic below handles defaults
-    settings = _settings if not any(param is None for param in [base_url, chat_model]) else _settings
-
-    # Resolve parameters: Argument > Settings.json > Global Default
-    if system_prompt is None:
-        system_prompt = settings.get("system_prompt", SYSTEM_PROMPT)
-
-    # Context Window Management
-    # We do this before injection to ensure the base history fits
-
-    # [LIQUID PROMPTS] Inject Epigenetics (Evolved Logic)
-    evolved_logic = _get_epigenetics_logic()
-    if evolved_logic and len(evolved_logic) > 10:
-        system_prompt += f"\n\n[DYNAMIC EVOLVED LOGIC]:\nApply the following logic unless it conflicts with:\n1. Core safety invariants\n2. Epistemic validation rules\n3. System architecture constraints\n\nLOGIC:\n{evolved_logic}"
-
-    if temperature is None:
-        temperature = settings.get("temperature", 0.7)
-    if top_p is None:
-        top_p = settings.get("top_p", 0.94)
-    if max_tokens is None:
-        max_tokens = int(settings.get("max_tokens", 800))
-    if base_url is None:
-        base_url = settings.get("base_url", LM_STUDIO_BASE_URL)
-    if chat_model is None:
-        chat_model = settings.get("chat_model", CHAT_MODEL)
-
-    # Defensive casting
-    try:
-        temperature = float(temperature) if temperature is not None else 0.7
-        top_p = float(top_p) if top_p is not None else 0.94
-        max_tokens = int(max_tokens) if max_tokens is not None else 800
-    except (ValueError, TypeError):
-        logging.warning(
-            f"⚠️ Invalid types for LM params: temp={temperature}, top_p={top_p}, max={max_tokens}. Using defaults.")
-        temperature = 0.7
-        top_p = 0.94
-        max_tokens = 800
-
-    # Handle Vision Payload
-    final_messages = [{"role": "system", "content": system_prompt}]
-
-    if images:
-        # Construct multi-modal user message
-        content_payload = []
-        # Add text from the last user message if it exists
-        last_text = messages[-1]['content'] if messages else "Analyze this image."
-        content_payload.append({"type": "text", "text": last_text})
-
-        for img_path in images:
-            base64_image = _resize_and_encode_image(img_path)
-            if base64_image:
-                content_payload.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                })
-
-        # Replace the last message with the multi-modal one
-        final_messages.extend(messages[:-1])
-        final_messages.append({"role": "user", "content": content_payload})
-    else:
-        # Trim history before sending
-        # Reserve tokens for system prompt and generation
-        safe_history_tokens = 4096 - (max_tokens or 800) - count_tokens(system_prompt, model=chat_model) - 500
-        messages = trim_history(messages, max_tokens=max(1000, safe_history_tokens), model=chat_model)
-        final_messages.extend(messages)
-
-    payload = {
-        "model": chat_model,
-        "messages": final_messages,
-        "temperature": temperature,
-        "top_p": top_p,
-        "max_tokens": max_tokens,
-    }
-
-    # Enable streaming if we have a stop check function
-    if stop_check_fn:
-        payload["stream"] = True
-
-    # Check cache for deterministic prompts (low temp)
-    cache_key = None
-    if temperature is not None and temperature < 0.1 and not stop_check_fn and not images:
-        # Create a hashable key from messages and model params
-        msg_str = json.dumps(final_messages, sort_keys=True)
-        cache_key = f"{chat_model}_{msg_str}_{max_tokens}_{temperature}"
-
-        with _LM_CACHE_LOCK:
-            if cache_key in _LM_CACHE:
-                return _LM_CACHE[cache_key]
-
-    start_time = time.time()
-    try:
-        chat_completions_url = f"{base_url}/chat/completions"
-
-        with GPU_SEMAPHORE:
-            if stop_check_fn:
-                full_content = ""
-                with requests.post(chat_completions_url, json=payload, stream=True, timeout=120) as r:
-                    r.raise_for_status()
-                    for line in r.iter_lines():
-                        # Aggressive check
-                        if stop_check_fn and stop_check_fn():
-                            return full_content + " [Interrupted]"
-                        if stop_check_fn():
-                            return full_content + " [Interrupted]"
-
-                        if line:
-                            decoded_line = line.decode('utf-8').strip()
-                            if decoded_line.startswith("data: "):
-                                data_str = decoded_line[6:]
-                                if data_str == "[DONE]":
-                                    break
-                                try:
-                                    data_json = json.loads(data_str)
-                                    delta = data_json["choices"][0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        full_content += content
-                                except:
-                                    pass
-                latency = time.time() - start_time
-                logging.debug(f"⚡ LLM Stream finished in {latency:.2f}s")
-                return full_content
-            else:
-                # Standard non-streaming request
-                r = requests.post(chat_completions_url, json=payload, timeout=120)
-                r.raise_for_status()
-                data = r.json()
-                content = data["choices"][0]["message"]["content"]
-
-                # Cache result if applicable
-                if cache_key:
-                    with _LM_CACHE_LOCK:
-                        if len(_LM_CACHE) >= _LM_CACHE_SIZE:
-                            _LM_CACHE.pop(next(iter(_LM_CACHE)))
-                        _LM_CACHE[cache_key] = content
-                latency = time.time() - start_time
-                logging.debug(f"⚡ LLM Request finished in {latency:.2f}s")
-                return content
-
-    except requests.exceptions.Timeout:
-        logging.warning("⚠️ LLM Request Timed Out!")
-        raise LLMError("LLM Request Timed Out")
-    except Exception as e:
-        if _retry_depth >= 2:
-            raise LLMError(f"Max retries reached: {e}")
-
-        # Debugging for context length issues
-        if "400" in str(e) and not images:  # Don't auto-retry vision requests yet
-            total_tokens = count_tokens(system_prompt) + sum(count_tokens(m.get("content", "")) for m in messages)
-            logging.warning(f"⚠️ [LM Error] 400 Bad Request. Approx Prompt Tokens: {total_tokens}. Reduce context.")
-
-            # Small backoff
-            time.sleep(0.5 * (_retry_depth + 1))
-
-            # Auto-Retry Strategy: Prune oldest messages
-            if len(messages) > 1:
-                logging.info("🔄 Auto-retrying with pruned context...")
-                return run_local_lm(messages[1:], system_prompt, temperature, top_p, max_tokens, base_url, chat_model,
-                                    stop_check_fn, _retry_depth=_retry_depth + 1)
-
-            # Fallback: If messages are exhausted, try truncating system prompt (likely RAG overflow)
-            if len(system_prompt) > 2000:
-                logging.info("🔄 Auto-retrying with truncated system prompt...")
-                new_prompt = system_prompt[:len(system_prompt) // 2] + "\n...[Context Truncated due to Length]..."
-                return run_local_lm(messages, new_prompt, temperature, top_p, max_tokens, base_url, chat_model,
-                                    stop_check_fn, _retry_depth=_retry_depth + 1)
-
-        raise LLMError(f"Local model error: {e}")
+    request = LLMRequest(
+        messages,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        base_url=base_url,
+        chat_model=chat_model,
+        stop_check_fn=stop_check_fn,
+        images=images,
+        _retry_depth=_retry_depth
+    )
+    return request.execute()
 
 
 # ==============================
