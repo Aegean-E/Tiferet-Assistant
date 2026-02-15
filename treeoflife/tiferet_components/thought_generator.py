@@ -1,22 +1,176 @@
 import re
 import json
-from typing import TYPE_CHECKING, List, Dict, Any
+from enum import Enum
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from ai_core.lm import compute_embedding, run_local_lm
 from ai_core.utils import parse_json_array_loose
 
 if TYPE_CHECKING:
     from treeoflife.tiferet import Decider
 
+class ThinkingStrategy(Enum):
+    AUTO = "auto"
+    LINEAR = "linear"
+    TREE_OF_THOUGHTS = "tree_of_thoughts"
+    DIALECTIC = "dialectic"
+    FIRST_PRINCIPLES = "first_principles"
+
 class ThoughtGenerator:
     def __init__(self, decider: 'Decider'):
         self.decider = decider
 
-    def perform_thinking_chain(self, topic: str, max_depth: int = 10, beam_width: int = 3):
-        """Execute a Tree of Thoughts (ToT) reasoning process."""
-        self.decider.log(f"🌳 Decider starting Tree of Thoughts on: {topic}")
-        if self.decider.chat_fn:
-            self.decider.chat_fn("Decider", f"🌳 Starting Tree of Thoughts: {topic}")
+    def perform_thinking_chain(self, topic: str, max_depth: int = 10, beam_width: int = 3, strategy: str = "auto"):
+        """
+        Execute a reasoning process using the specified strategy.
+        Strategies:
+        - AUTO: Let the AI decide based on topic complexity.
+        - LINEAR: Simple, sequential chain of thought (Step 1 -> Step 2 -> Conclusion).
+        - TREE_OF_THOUGHTS: Branching exploration of multiple possibilities (Original).
+        - DIALECTIC: Thesis vs Antithesis debate.
+        - FIRST_PRINCIPLES: Deconstruct to basic truths and rebuild.
+        """
 
+        # Resolve Strategy
+        if strategy == "auto" or strategy == ThinkingStrategy.AUTO.value:
+            selected_strategy = self._choose_strategy(topic)
+        else:
+            try:
+                selected_strategy = ThinkingStrategy(strategy.lower())
+            except ValueError:
+                self.decider.log(f"⚠️ Invalid strategy '{strategy}'. Defaulting to TREE_OF_THOUGHTS.")
+                selected_strategy = ThinkingStrategy.TREE_OF_THOUGHTS
+
+        self.decider.log(f"🧠 Decider starting Thinking Chain on: {topic} (Strategy: {selected_strategy.name})")
+        if self.decider.chat_fn:
+            self.decider.chat_fn("Decider", f"🧠 Thinking ({selected_strategy.name}): {topic}")
+
+        # Dispatch
+        try:
+            if selected_strategy == ThinkingStrategy.LINEAR:
+                self._perform_linear_chain(topic)
+            elif selected_strategy == ThinkingStrategy.DIALECTIC:
+                self._perform_dialectical(topic)
+            elif selected_strategy == ThinkingStrategy.FIRST_PRINCIPLES:
+                self._perform_first_principles(topic)
+            else:
+                # Default to Tree of Thoughts
+                self._perform_tree_of_thoughts(topic, max_depth, beam_width)
+        except Exception as e:
+            self.decider.log(f"❌ Thinking Chain failed ({selected_strategy.name}): {e}")
+            self.decider.command_executor.create_note(f"Thinking Error ({topic}): {e}")
+
+        if self.decider.heartbeat:
+            self.decider.heartbeat.force_task("wait", 0, "Thinking chain complete")
+
+    def _choose_strategy(self, topic: str) -> ThinkingStrategy:
+        """Decide which thinking strategy fits the topic best."""
+        prompt = (
+            f"TOPIC: {topic}\n\n"
+            "TASK: Select the best reasoning strategy for this topic.\n"
+            "1. LINEAR: Simple, step-by-step logic. Good for clear-cut problems.\n"
+            "2. TREE_OF_THOUGHTS: Complex exploration of multiple paths. Good for creative or ambiguous problems.\n"
+            "3. DIALECTIC: Debate between opposing views. Good for controversial or ethical topics.\n"
+            "4. FIRST_PRINCIPLES: Deconstruction to basics. Good for fundamental understanding or innovation.\n"
+            "Output ONLY the strategy name (LINEAR, TREE_OF_THOUGHTS, DIALECTIC, FIRST_PRINCIPLES)."
+        )
+
+        response = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Meta-Cognitive Planner.",
+            max_tokens=20,
+            temperature=0.1,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model")
+        ).strip().upper()
+
+        if "LINEAR" in response: return ThinkingStrategy.LINEAR
+        if "DIALECTIC" in response: return ThinkingStrategy.DIALECTIC
+        if "FIRST" in response: return ThinkingStrategy.FIRST_PRINCIPLES
+        return ThinkingStrategy.TREE_OF_THOUGHTS
+
+    def _perform_linear_chain(self, topic: str):
+        """Simple sequential reasoning."""
+        context = self._gather_thinking_context(topic)
+        prompt = (
+            f"{context}\n"
+            "TASK: Reason through this topic step-by-step to reach a conclusion.\n"
+            "Format:\n"
+            "1. <Point>\n"
+            "2. <Point>\n"
+            "...\n"
+            "Conclusion: <Final Thought>"
+        )
+
+        chain = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Logical Engine.",
+            max_tokens=800,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model"),
+            stop_check_fn=self.decider.stop_check
+        )
+
+        self.decider.log(f"🧠 Linear Reasoning Complete.")
+        self.decider.command_executor.create_note(f"Linear Reasoning ({topic}):\n{chain}")
+        self.decider.reasoning_store.add(content=f"Linear Reasoning ({topic}): {chain}", source="linear_reasoning", confidence=1.0)
+        self.decider.decision_maker._reflect_on_decision(f"Linear Reasoning on {topic}", chain[:200] + "...")
+
+
+    def _perform_dialectical(self, topic: str):
+        """Dialectical debate (Thesis-Antithesis-Synthesis)."""
+        if self.decider.dialectics:
+            context = self._gather_thinking_context(topic)
+            result = self.decider.dialectics.run_debate(topic, context=context, reasoning_store=self.decider.reasoning_store)
+            self.decider.command_executor.create_note(f"Dialectic Synthesis ({topic}):\n{result}")
+        else:
+            self.decider.log("⚠️ Dialectics component missing. Fallback to Linear.")
+            self._perform_linear_chain(topic)
+
+    def _perform_first_principles(self, topic: str):
+        """First Principles decomposition."""
+        context = self._gather_thinking_context(topic)
+
+        # Step 1: Deconstruct
+        deconstruct_prompt = (
+            f"{context}\n"
+            "TASK: Deconstruct this topic into its most fundamental truths or axioms.\n"
+            "Discard all assumptions, analogies, and social conventions.\n"
+            "List ONLY the undeniable facts."
+        )
+        axioms = run_local_lm(
+            messages=[{"role": "user", "content": deconstruct_prompt}],
+            system_prompt="You are a First Principles Thinker.",
+            max_tokens=400,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model")
+        )
+
+        self.decider.log(f"🧠 Axioms found: {axioms[:100]}...")
+
+        # Step 2: Reconstruct
+        reconstruct_prompt = (
+            f"AXIOMS:\n{axioms}\n\n"
+            f"ORIGINAL TOPIC: {topic}\n"
+            "TASK: Rebuild a solution or understanding from these axioms alone.\n"
+            "Do not use external assumptions.\n"
+            "Derive the conclusion logically."
+        )
+
+        conclusion = run_local_lm(
+            messages=[{"role": "user", "content": reconstruct_prompt}],
+            system_prompt="You are a First Principles Thinker.",
+            max_tokens=600,
+            base_url=self.decider.get_settings().get("base_url"),
+            chat_model=self.decider.get_settings().get("chat_model")
+        )
+
+        full_text = f"First Principles Analysis on {topic}:\n\nAXIOMS:\n{axioms}\n\nCONCLUSION:\n{conclusion}"
+        self.decider.command_executor.create_note(full_text)
+        self.decider.reasoning_store.add(content=full_text, source="first_principles", confidence=1.0)
+        self.decider.decision_maker._reflect_on_decision(f"First Principles on {topic}", conclusion[:200] + "...")
+
+    def _perform_tree_of_thoughts(self, topic: str, max_depth: int = 10, beam_width: int = 3):
+        """Execute a Tree of Thoughts (ToT) reasoning process."""
         # 1. Gather Context
         static_context = self._gather_thinking_context(topic)
 
@@ -64,9 +218,6 @@ class ThoughtGenerator:
             # This ensures partial progress is preserved in memory
             if not final_conclusion:
                 self.decider.command_executor.create_note(f"ToT Summary ({topic}): {summary}")
-
-        if self.decider.heartbeat:
-            self.decider.heartbeat.force_task("wait", 0, "Thinking chain complete")
 
     def _gather_thinking_context(self, topic: str) -> str:
         """Helper to gather relevant memories, documents, and subjective context for ToT."""

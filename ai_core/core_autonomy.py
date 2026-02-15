@@ -37,6 +37,7 @@ class AutonomyManager:
             "synthesis", "introspection", "self_correction", "gap_investigation",
             "conduct_research", # New Proactive Research
             "deep_planning", "strategy_refinement",
+            "autonomous_think", # Autonomous Reasoning
             # Capability Improvement Actions (Meta-Strategic)
             "improve_reasoning", "optimize_memory", "refine_tools"
         ]
@@ -72,6 +73,8 @@ class AutonomyManager:
             default_weights["gap_investigation"]["confusion"] = 0.3
             default_weights["introspection"]["entropy_pressure"] = 0.7
             default_weights["deep_planning"]["pressure_x_confusion"] = 0.8
+            default_weights["autonomous_think"]["confusion"] = 0.7
+            default_weights["autonomous_think"]["entropy_pressure"] = 0.6
             default_weights["strategy_refinement"]["success_momentum"] = 0.6
             default_weights["optimize_memory"]["memory_bloat"] = 0.8
             default_weights["improve_reasoning"]["reasoning_error_rate"] = 0.7
@@ -424,6 +427,26 @@ class AutonomyManager:
              
              reward_val = end_utility - start_utility
              self.replay_buffer.append((features, action_name, reward_val, features, []))
+
+        elif action_name == "autonomous_think":
+             # Autonomous Reasoning on a High-Entropy Topic
+             topic = None
+             # 1. Try Da'at sparse topic
+             if self.core.daat:
+                 topic = self.core.daat.get_sparse_topic()
+
+             # 2. Try Curiosity Gap
+             if not topic:
+                 gaps = self.core.memory_store.get_active_by_type("CURIOSITY_GAP")
+                 if gaps:
+                     topic = random.choice(gaps)[2]
+
+             if not topic:
+                 topic = "Recursive Self-Improvement"
+
+             self.core.log(f"🧠 Autonomy: Triggering autonomous thinking on '{topic}'")
+             # Use "auto" strategy so ThoughtGenerator picks the best one
+             self.core.thread_pool.submit(async_feedback_wrapper, lambda: self.core.decider.thought_generator.perform_thinking_chain(topic, strategy="auto"))
 
         elif action_name == "improve_reasoning":
              # Trigger Meta-Learner to evolve system instructions specifically for reasoning
