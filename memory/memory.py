@@ -123,6 +123,13 @@ class MemoryStore:
             con.execute("CREATE INDEX IF NOT EXISTS idx_subject ON memories(subject);")
             con.execute("CREATE INDEX IF NOT EXISTS idx_parent_id ON memories(parent_id);")
 
+            # Performance Optimizations
+            con.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON memories(created_at);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_parent_created ON memories(parent_id, created_at);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_identity_created ON memories(identity, created_at);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_deleted ON memories(deleted);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_verified ON memories(verified);")
+
             # Migration: Add embedding column if it doesn't exist (for existing DBs)
             try:
                 con.execute("ALTER TABLE memories ADD COLUMN embedding TEXT")
@@ -883,18 +890,18 @@ class MemoryStore:
         try:
             with self._connect() as con:
                 cursor = con.execute("""
-                    SELECT m.id, m.type, m.subject, m.text, m.embedding, m.confidence, m.affect
+                    SELECT m.id, m.embedding, m.confidence, m.affect
                     FROM memories m
                     WHERE m.parent_id IS NULL
                     AND m.deleted = 0
                     AND m.embedding IS NOT NULL
                 """)
 
-                results = []
+                candidate_scores = []
                 q_norm = np.linalg.norm(query_embedding)
                 if q_norm == 0: return []
 
-                BATCH_SIZE = 1000
+                BATCH_SIZE = 2000 # Increased batch size since we fetch less data
 
                 while True:
                     rows = cursor.fetchmany(BATCH_SIZE)
@@ -902,21 +909,21 @@ class MemoryStore:
                         break
                     
                     embeddings = []
-                    valid_rows = []
+                    batch_meta = [] # (id, confidence, affect)
 
                     for r in rows:
-                        if not r[4]: continue
+                        if not r[1]: continue
                         try:
                             # Handle binary blob or JSON
-                            if isinstance(r[4], bytes):
-                                emb = np.frombuffer(r[4], dtype='float32')
+                            if isinstance(r[1], bytes):
+                                emb = np.frombuffer(r[1], dtype='float32')
                             else:
-                                emb = np.array(json.loads(r[4]), dtype='float32')
+                                emb = np.array(json.loads(r[1]), dtype='float32')
 
                             if emb.shape[0] != query_embedding.shape[0]:
                                 continue
                             embeddings.append(emb)
-                            valid_rows.append(r)
+                            batch_meta.append((r[0], r[2], r[3]))
                         except:
                             continue
 
@@ -932,21 +939,48 @@ class MemoryStore:
                     sims = dots / (norms * q_norm)
 
                     for i, sim in enumerate(sims):
-                        r = valid_rows[i]
-                        conf = r[5] if r[5] is not None else 0.5
+                        mid, conf, mem_affect = batch_meta[i]
+                        conf = conf if conf is not None else 0.5
+                        mem_affect = mem_affect if mem_affect is not None else 0.5
 
                         # Calculate weighted score
                         weighted_score = float(sim) * (0.5 + (0.5 * conf))
 
                         if target_affect is not None:
-                            mem_affect = r[6] if len(r) > 6 and r[6] is not None else 0.5
                             affect_sim = 1.0 - abs(target_affect - mem_affect)
                             weighted_score = (weighted_score * 0.8) + (affect_sim * 0.2)
                             
-                        results.append((r[0], r[1], r[2], r[3], round(float(weighted_score), 4)))
+                        candidate_scores.append((mid, round(float(weighted_score), 4)))
+
+                # Sort and keep top K
+                candidate_scores.sort(key=lambda x: x[1], reverse=True)
+                top_k = candidate_scores[:limit]
+
+                if not top_k:
+                    return []
+
+                # Fetch full details for top K
+                top_ids = [x[0] for x in top_k]
+                placeholders = ','.join(['?'] * len(top_ids))
+
+                with self._connect() as con:
+                    details_rows = con.execute(f"""
+                        SELECT m.id, m.type, m.subject, m.text
+                        FROM memories m
+                        WHERE m.id IN ({placeholders})
+                    """, top_ids).fetchall()
+
+                # Map back to results preserving order
+                details_map = {r[0]: (r[1], r[2], r[3]) for r in details_rows}
+                results = []
                 
-                results.sort(key=lambda x: x[4], reverse=True)
-                return results[:limit]
+                for mid, score in top_k:
+                    if mid in details_map:
+                        d = details_map[mid]
+                        results.append((mid, d[0], d[1], d[2], score))
+
+                return results
+
         except Exception as e:
             logging.error(f"⚠️ Linear search fallback failed: {e}")
             return []
@@ -1530,39 +1564,39 @@ class MemoryStore:
 
     def _search_refuted_fallback(self, query_embedding: np.ndarray, limit: int = 3) -> List[Tuple]:
         """Optimized linear scan using vectorized Numpy operations."""
-        results = []
+        candidate_scores = []
         q_norm = np.linalg.norm(query_embedding)
         if q_norm == 0: return []
         
         with self._connect() as con:
             cursor = con.execute("""
-                SELECT id, subject, text, source, embedding 
+                SELECT id, embedding
                 FROM memories 
                 WHERE type='REFUTED_BELIEF' AND deleted=0 AND embedding IS NOT NULL
             """)
             
-            BATCH_SIZE = 1000
+            BATCH_SIZE = 2000
 
             while True:
                 rows = cursor.fetchmany(BATCH_SIZE)
                 if not rows: break
                 
                 embeddings = []
-                valid_rows = []
+                batch_ids = []
 
                 for r in rows:
-                    if not r[4]: continue
+                    if not r[1]: continue
                     try:
-                        if isinstance(r[4], bytes):
-                            emb = np.frombuffer(r[4], dtype='float32')
+                        if isinstance(r[1], bytes):
+                            emb = np.frombuffer(r[1], dtype='float32')
                         else:
-                            emb = np.array(json.loads(r[4]), dtype='float32')
+                            emb = np.array(json.loads(r[1]), dtype='float32')
 
                         # Check dimension
                         if emb.shape[0] != query_embedding.shape[0]:
                             continue
                         embeddings.append(emb)
-                        valid_rows.append(r)
+                        batch_ids.append(r[0])
                     except: continue
 
                 if not embeddings: continue
@@ -1586,11 +1620,35 @@ class MemoryStore:
                 indices = np.where(mask)[0]
 
                 for idx in indices:
-                    r = valid_rows[idx]
-                    results.append((r[0], r[1], r[2], r[3], float(sims[idx])))
+                    mid = batch_ids[idx]
+                    candidate_scores.append((mid, float(sims[idx])))
         
-        results.sort(key=lambda x: x[4], reverse=True)
-        return results[:limit]
+        # Sort and fetch details
+        candidate_scores.sort(key=lambda x: x[1], reverse=True)
+        top_k = candidate_scores[:limit]
+
+        if not top_k:
+            return []
+
+        top_ids = [x[0] for x in top_k]
+        placeholders = ','.join(['?'] * len(top_ids))
+
+        with self._connect() as con:
+            details_rows = con.execute(f"""
+                SELECT id, subject, text, source
+                FROM memories
+                WHERE id IN ({placeholders})
+            """, top_ids).fetchall()
+
+        details_map = {r[0]: (r[1], r[2], r[3]) for r in details_rows}
+        results = []
+
+        for mid, score in top_k:
+            if mid in details_map:
+                d = details_map[mid]
+                results.append((mid, d[0], d[1], d[2], score))
+
+        return results
 
     # --------------------------
     # Reminders (Temporal Awareness)

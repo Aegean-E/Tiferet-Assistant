@@ -439,32 +439,56 @@ class MetaMemoryStore:
         # 2. Slow Path: Linear Scan (Fallback)
         try:
             with self._connect() as con:
-                rows = con.execute("SELECT id, event_type, subject, text, created_at, embedding, affect FROM meta_memories WHERE embedding IS NOT NULL").fetchall()
+                rows = con.execute("SELECT id, embedding FROM meta_memories WHERE embedding IS NOT NULL").fetchall()
             
-            results = []
+            candidate_scores = []
             q_norm = np.linalg.norm(query_embedding)
             
             for r in rows:
-                if not r[5]: continue
+                if not r[1]: continue
                 try:
-                    emb = np.array(json.loads(r[5]), dtype=float)
+                    emb = np.array(json.loads(r[1]), dtype=float)
                     emb_norm = np.linalg.norm(emb)
                     if q_norm > 0 and emb_norm > 0:
                         sim = np.dot(query_embedding, emb) / (q_norm * emb_norm)
-                        results.append({
-                            'id': r[0],
-                            'event_type': r[1],
-                            'subject': r[2],
-                            'text': r[3],
-                            'created_at': r[4],
-                            'affect': r[6],
-                            'similarity': float(sim)
-                        })
+                        candidate_scores.append((r[0], float(sim)))
                 except:
                     continue
             
-            results.sort(key=lambda x: x['similarity'], reverse=True)
-            return results[:limit]
+            # Sort and fetch details
+            candidate_scores.sort(key=lambda x: x[1], reverse=True)
+            top_k = candidate_scores[:limit]
+
+            if not top_k:
+                return []
+
+            top_ids = [x[0] for x in top_k]
+            placeholders = ','.join(['?'] * len(top_ids))
+
+            with self._connect() as con:
+                details_rows = con.execute(f"""
+                    SELECT id, event_type, subject, text, created_at, affect
+                    FROM meta_memories
+                    WHERE id IN ({placeholders})
+                """, top_ids).fetchall()
+
+            details_map = {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in details_rows}
+            results = []
+
+            for mid, score in top_k:
+                if mid in details_map:
+                    d = details_map[mid]
+                    results.append({
+                        'id': mid,
+                        'event_type': d[0],
+                        'subject': d[1],
+                        'text': d[2],
+                        'created_at': d[3],
+                        'affect': d[4],
+                        'similarity': score
+                    })
+
+            return results
         except Exception as e:
             logging.error(f"⚠️ Linear search failed for meta-memory: {e}")
         
