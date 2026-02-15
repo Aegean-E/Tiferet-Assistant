@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 import threading
 import time
 import os
@@ -266,12 +265,6 @@ class AICore:
             
         self.thread_pool.shutdown(wait=False, cancel_futures=True)
         self.log("✅ AICore: Shutdown complete.")
-
-    def _connect(self) -> sqlite3.Connection:
-        """Helper to get a thread-local SQLite connection."""
-        # This is a placeholder. In a real scenario, you'd use a connection pool
-        # or threading.local to manage connections per thread.
-        return sqlite3.connect(":memory:") # Example: in-memory DB for testing
 
     def _maintain_homeostasis(self):
         """Update internal metabolic state."""
