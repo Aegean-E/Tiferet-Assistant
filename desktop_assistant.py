@@ -30,7 +30,7 @@ except ImportError:
 # Import AI Core
 from ai_core.ai_core import AICore
 from ai_core.ai_controller import AIController
-from ai_core.lm import transcribe_audio
+from ai_core.lm import transcribe_audio, configure_lm
 from docs.default_prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT, DAYDREAM_EXTRACTOR_PROMPT
 
 from bridges.telegram_api import TelegramBridge
@@ -320,6 +320,8 @@ class DesktopAssistantApp(DesktopAssistantUI):
                     new_settings = json.load(f)
                 self.settings.update(new_settings)
                 
+                configure_lm(self.settings)
+
                 # Trigger updates
                 if hasattr(self, 'ai_core'):
                     self.ai_core.reload_models()
@@ -334,6 +336,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
         """Callback for Decider to update settings and UI"""
         with self.settings_lock:
             self.settings.update(new_settings)
+            configure_lm(self.settings)
             self.save_settings()
             
         # Update UI on main thread
@@ -387,6 +390,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             if version < CURRENT_SETTINGS_VERSION:
                 settings = self.migrate_settings(settings, version)
             
+            configure_lm(settings)
             return settings
         else:
             # File missing: Create defaults and save
@@ -425,6 +429,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             }
             self.settings = defaults
             self.save_settings()
+            configure_lm(defaults)
             return defaults
 
     def migrate_settings(self, settings: Dict, old_version: float) -> Dict:
