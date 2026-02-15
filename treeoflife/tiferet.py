@@ -4,7 +4,6 @@ import time
 import random
 import json
 import traceback
-import platform
 import operator
 import threading
 import logging
