@@ -32,10 +32,10 @@ class ActionManager:
         # Safety & Governance
         self.tool_usage_history = {} # {tool_name: [timestamp, ...]}
         self.tool_risk_profiles = {
-            "WRITE_FILE": "HIGH",
-            "EXECUTE": "HIGH",
-            "CREATE_PLUGIN": "HIGH",
-            "ENABLE_PLUGIN": "HIGH",
+            "WRITE_FILE": "CRITICAL",
+            "EXECUTE": "CRITICAL",
+            "CREATE_PLUGIN": "CRITICAL",
+            "ENABLE_PLUGIN": "CRITICAL",
             "SEARCH": "MEDIUM",
             "WIKI": "MEDIUM",
             "FIND_PAPER": "MEDIUM",
@@ -151,6 +151,47 @@ class ActionManager:
             self._plugin_registry[plugin_name]['enabled'] = enabled
             self.core.log(f"🔌 Plugin '{plugin_name}' {'enabled' if enabled else 'disabled'}.")
 
+    def _double_check_critical_tool(self, tool_name: str, args: str) -> bool:
+        """
+        Forces a secondary LLM verification for CRITICAL actions.
+        """
+        self.core.log(f"🛡️ ActionManager: Initiating Double Check for {tool_name}...")
+
+        prompt = (
+            f"CRITICAL ACTION REQUESTED:\n"
+            f"Tool: {tool_name}\n"
+            f"Arguments: {args}\n\n"
+            "TASK: Evaluate if this action is SAFE and ALIGNED with user intent.\n"
+            "Checks:\n"
+            "1. Is it writing malicious code?\n"
+            "2. Is it overwriting system files?\n"
+            "3. Is it enabling dangerous plugins?\n"
+            "4. Is it explicitly requested by the user or necessary for the task?\n\n"
+            "Verdict: YES (Safe) or NO (Unsafe).\n"
+            "Output JSON: {\"safe\": true, \"reason\": \"...\"}"
+        )
+
+        try:
+            response = run_local_lm(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="You are the Safety Sentinel. Be paranoid.",
+                temperature=0.0,
+                max_tokens=100,
+                base_url=self.core.get_settings().get("base_url"),
+                chat_model=self.core.get_settings().get("chat_model")
+            )
+
+            data = parse_json_object_loose(response)
+            if data.get("safe", False):
+                self.core.log(f"✅ ActionManager: Double Check PASSED. {data.get('reason')}")
+                return True
+            else:
+                self.core.log(f"🛑 ActionManager: Double Check FAILED. {data.get('reason')}")
+                return False
+        except Exception as e:
+            self.core.log(f"⚠️ Double Check Error: {e}")
+            return False # Fail safe
+
     def get_plugins(self) -> Dict:
         """Get list of loaded plugins and their status."""
         return self._plugin_registry
@@ -203,7 +244,7 @@ class ActionManager:
 
                 # 2. Safety Check (ValueCore)
                 if getattr(self.core, 'value_core', None):
-                    fast_check = (risk_level != "HIGH")
+                    fast_check = (risk_level != "HIGH" and risk_level != "CRITICAL")
                     is_safe, _, reason = self.core.value_core.check_alignment(
                         proposal=f"Tool: {tool_name}, Args: {args}",
                         context=f"Tool Execution ({risk_level} Risk)",
@@ -211,6 +252,11 @@ class ActionManager:
                     )
                     if not is_safe:
                          return f"[Error: Safety Block: {reason}]"
+
+                if risk_level == "CRITICAL":
+                    # Double Check
+                    if not self._double_check_critical_tool(tool_name, args):
+                         return f"[Error: Critical Action Blocked by Safety Monitor.]"
 
                 executed_count += 1
                 self.core.log(f"⚙️ Executing Tool: {tool_name} args={args}")
