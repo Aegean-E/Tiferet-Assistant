@@ -5,6 +5,7 @@ import math
 from typing import Dict, Any
 import json
 import logging
+import re
 
 from collections import deque
 from .lm import run_local_lm
@@ -38,6 +39,7 @@ class AutonomyManager:
             "conduct_research", # New Proactive Research
             "deep_planning", "strategy_refinement",
             "autonomous_think", # Autonomous Reasoning
+            "manage_goals", # Goal Autonomy
             # Capability Improvement Actions (Meta-Strategic)
             "improve_reasoning", "optimize_memory", "refine_tools"
         ]
@@ -79,6 +81,10 @@ class AutonomyManager:
             default_weights["optimize_memory"]["memory_bloat"] = 0.8
             default_weights["improve_reasoning"]["reasoning_error_rate"] = 0.7
             default_weights["refine_tools"]["success_momentum"] = 0.4
+            # New Action: Manage Goals
+            default_weights["manage_goals"]["bias"] = 0.2
+            default_weights["manage_goals"]["goal_pressure"] = -0.8 # Trigger when goal pressure is LOW
+            default_weights["manage_goals"]["boredom"] = 0.6
         
         self.weights = saved_state.get("weights", default_weights)
 
@@ -302,6 +308,74 @@ class AutonomyManager:
         finally:
             self.processing_autonomy = False
 
+    def _execute_autonomous_response(self, response: str) -> bool:
+        """
+        Parses and executes commands found in an autonomous response string.
+        Supports: [EXECUTE], [THINK], [GOAL_CREATE], [SEARCH_INTERNET], [READ_DOC]
+        Returns True if any command was executed.
+        """
+        executed = False
+
+        # 1. [EXECUTE: TOOL, ARGS]
+        if "[EXECUTE:" in response:
+            result = self.core.action_manager.process_tool_calls(response)
+            self.core.reasoning_store.add(content=f"Agency Execution Result: {result[:500]}", source="agency_loop", confidence=1.0)
+            executed = True
+
+        # 2. [THINK: TOPIC, STRATEGY]
+        think_match = re.search(r"\[THINK:(.*?)\]", response, re.IGNORECASE)
+        if think_match:
+            content = think_match.group(1).strip()
+            topic = content
+            strategy = "auto"
+            if "," in content:
+                parts = content.split(",", 1)
+                topic = parts[0].strip()
+                strategy = parts[1].strip()
+
+            # Clean
+            topic = topic.replace("<", "").replace(">", "")
+
+            self.core.log(f"🧠 Autonomy Triggered Thinking: {topic}")
+            self.core.decider.thought_generator.perform_thinking_chain(topic, strategy=strategy)
+            executed = True
+
+        # 3. [GOAL_CREATE: CONTENT]
+        goal_match = re.search(r"\[GOAL_CREATE:(.*?)\]", response, re.IGNORECASE)
+        if goal_match:
+            content = goal_match.group(1).strip()
+            self.core.log(f"🎯 Autonomy Triggered Goal Creation: {content}")
+            self.core.decider.goal_manager.create_goal(content)
+            executed = True
+
+        # 4. [SEARCH_INTERNET: QUERY, SOURCE]
+        search_match = re.search(r"\[SEARCH_INTERNET:(.*?)\]", response, re.IGNORECASE)
+        if search_match:
+            content = search_match.group(1).strip()
+            query = content
+            source = "WEB"
+            if "," in content:
+                parts = content.split(",", 1)
+                query = parts[0].strip()
+                source = parts[1].strip().upper()
+
+            self.core.log(f"🌐 Autonomy Triggered Search: {query} ({source})")
+            if "search_internet" in self.core.decider.actions:
+                result = self.core.decider.actions["search_internet"](query, source)
+                self.core.reasoning_store.add(content=f"Autonomy Search Result: {result}", source="internet_bridge", confidence=1.0)
+            executed = True
+
+        # 5. [READ_DOC: ARGS]
+        read_match = re.search(r"\[READ_DOC:(.*?)\]", response, re.IGNORECASE)
+        if read_match:
+            args = read_match.group(1).strip()
+            self.core.log(f"📄 Autonomy Triggered Read Doc: {args}")
+            if "read_document" in self.core.decider.actions:
+                 self.core.decider.actions["read_document"](args)
+            executed = True
+
+        return executed
+
     def execute_action(self, action_name: str, start_utility: float, features: Dict[str, float]):
         """
         Unified execution path for autonomous actions.
@@ -332,9 +406,10 @@ class AutonomyManager:
         
         if action_name == "pursue_goal":
              response = self.core.decider.run_autonomous_cycle()
-             if response and "[EXECUTE:" in response:
-                 result = self.core.action_manager.process_tool_calls(response)
-                 self.core.reasoning_store.add(content=f"Agency Execution Result: {result[:500]}", source="agency_loop", confidence=1.0)
+             # Use the new helper to execute any commands found
+             executed = self._execute_autonomous_response(response) if response else False
+
+             if executed:
                  # Immediate feedback for synchronous action
                  end_utility = self.core.decider.calculate_utility() if self.core.decider else 0.5
                  new_features = self._get_current_features(None)
@@ -347,6 +422,17 @@ class AutonomyManager:
                  if self.core.crs and (end_utility - start_utility) > 0:
                     self.core.crs.update_skill("pursue_goal", end_utility - start_utility)
         
+        elif action_name == "manage_goals":
+             # Autonomous Goal Creation/Pruning
+             self.core.decider.manage_goals(allow_creation=True)
+
+             end_utility = self.core.decider.calculate_utility() if self.core.decider else 0.5
+             new_features = self._get_current_features(None)
+             reward_val = end_utility - start_utility
+
+             self.replay_buffer.append((features, action_name, reward_val, new_features, []))
+             self.update_policy(action_name, start_utility, end_utility, features, new_features)
+
         elif action_name == "study_archives":
             created_ids = self.core.chokmah.study_archives()
             if created_ids:
