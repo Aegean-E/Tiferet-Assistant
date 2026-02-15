@@ -99,15 +99,24 @@ class GlobalWorkspace:
             existing["source"] = source # Update source
             if metadata:
                 existing["metadata"].update(metadata)
+
+            # Immediate broadcast if highly salient
+            if existing["salience"] > 0.8:
+                self.broadcast(existing)
         else:
             # Add new item
-            self.working_memory.append({
+            new_item = {
                 "content": content,
                 "source": source,
                 "salience": min(1.0, salience),
                 "timestamp": time.time(),
                 "metadata": metadata or {}
-            })
+            }
+            self.working_memory.append(new_item)
+
+            # Immediate broadcast if highly salient
+            if new_item["salience"] > 0.8:
+                self.broadcast(new_item)
 
     def decay(self):
         """
@@ -287,7 +296,8 @@ class GlobalWorkspace:
 
         if response and not response.startswith("⚠️"):
             # Integrate back with high salience to maintain focus
-            self.integrate(response, "GlobalWorkspace", 1.0)
+            # Use 0.9 to be high salience but avoid triggering immediate interrupts (threshold > 0.9)
+            self.integrate(response, "GlobalWorkspace", 0.9)
             return response
 
         return content

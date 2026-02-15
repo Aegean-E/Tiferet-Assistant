@@ -43,7 +43,7 @@ class Phenomenology:
         # 2. Generate Inner Monologue (LLM - Low priority)
         # Triggered if arousal is high (strong feeling) or random spontaneous thought
         # We throttle this to avoid spamming LLM calls
-        if (self.arousal > 0.7 or random.random() < 0.1) and (time.time() - self.last_update > 10):
+        if (self.arousal > 0.6 or random.random() < 0.3) and (time.time() - self.last_update > 5):
             self._generate_internal_monologue(focus)
             self.last_update = time.time()
 

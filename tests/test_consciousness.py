@@ -31,6 +31,18 @@ class TestConsciousness(unittest.TestCase):
     def tearDown(self):
         self.core.event_bus.stop()
 
+    def test_broadcast_on_high_salience(self):
+        # Mock broadcast
+        self.gw.broadcast = MagicMock()
+
+        # Low salience - no broadcast
+        self.gw.integrate("Low salience item", "Test", 0.5)
+        self.gw.broadcast.assert_not_called()
+
+        # High salience - immediate broadcast
+        self.gw.integrate("High salience item", "Test", 0.9)
+        self.gw.broadcast.assert_called()
+
     def test_tool_execution_awareness(self):
         # Trigger event
         self.core.event_bus.publish("TOOL_EXECUTION", {"tool": "SEARCH", "args": "python consciousness"}, source="ActionManager")

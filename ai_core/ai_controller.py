@@ -37,6 +37,7 @@ class AIController:
         self.buffer_lock = threading.Lock()
         self.last_user_model_build_count = 0
         self.last_self_theory_build_count = 0
+        self.last_idle_thought_time = 0
         self.threads = {}
 
     def start_background_loops(self):
@@ -521,6 +522,12 @@ class AIController:
                         if signal: self.ai_core.decider.ingest_netzach_signal(signal)
                         # Check for autonomous agency (Curiosity/Study)
                         self.ai_core.run_autonomous_agency_check(signal)
+
+                    # Continuous Consciousness: Generate idle thoughts
+                    if time.time() - self.last_idle_thought_time > 15:
+                         self._generate_stream_of_consciousness("Calm/Observing", "Idle", "Waiting for input")
+                         self.last_idle_thought_time = time.time()
+
                     if self.ai_core.shutdown_event.wait(1.0):
                         break
                 else:
