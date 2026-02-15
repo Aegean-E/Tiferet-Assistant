@@ -22,6 +22,7 @@ class TestConfig(unittest.TestCase):
         self.assertTrue(config.TEMP_UPLOADS_DIR.startswith(config.DATA_DIR))
         self.assertTrue(config.UPLOADED_DOCS_DIR.startswith(config.DATA_DIR))
         self.assertTrue(config.BACKUPS_DIR.startswith(config.DATA_DIR))
+        self.assertTrue(config.LOGS_DIR.startswith(config.DATA_DIR))
 
 if __name__ == '__main__':
     unittest.main()
