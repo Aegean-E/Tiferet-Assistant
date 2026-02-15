@@ -271,12 +271,31 @@ class DecisionMaker:
                  context += "CONSTRAINT: System is overloaded. DO NOT create new goals. Focus on closing existing ones or consolidating memory.\n"
 
             # Affective Bias Injection
-            if self.decider.mood < 0.3:
-                context += "EMOTIONAL STATE: Depressed/Fatigued. You feel discouraged. Prioritize stability, safety, and low-risk consolidation. Avoid new goals.\n"
-            elif self.decider.mood > 0.8:
-                context += "EMOTIONAL STATE: Manic/Energetic. You feel highly capable. Prioritize high-risk, high-reward innovation and complex reasoning.\n"
+            if self.decider.value_core and self.decider.value_core.self_model:
+                v, a = self.decider.value_core.self_model.current_feeling_tone
+                state_label = self.decider.value_core.self_model.current_emotional_state
+                context += f"EMOTIONAL STATE: {state_label} (Valence: {v:.2f}, Arousal: {a:.2f}).\n"
+
+                if a > 0.6: # High Arousal
+                    if v < 0.4: # Negative High Arousal (Anxious)
+                         context += "GUIDANCE: You feel Anxious/Threatened. Prioritize SAFETY, VERIFICATION, and immediate threat resolution. Avoid new risks.\n"
+                    else: # Positive High Arousal (Excited)
+                         context += "GUIDANCE: You feel Excited/Capable. Prioritize EXPLORATION, CREATIVITY, and COMPLEX GOALS.\n"
+                elif a < 0.4: # Low Arousal
+                    if v < 0.4: # Negative Low Arousal (Depressed)
+                         context += "GUIDANCE: You feel Depressed/Bored. Motivation is low. Stick to ROUTINE maintenance and low-effort tasks. Avoid starting big projects.\n"
+                    else: # Positive Low Arousal (Content)
+                         context += "GUIDANCE: You feel Content/Peaceful. Good time for REFLECTION, CONSOLIDATION, and deep thought.\n"
+                else:
+                     context += "GUIDANCE: You feel Balanced. Proceed with standard optimization.\n"
             else:
-                context += "EMOTIONAL STATE: Balanced. Proceed with standard optimization.\n"
+                # Fallback to legacy mood
+                if self.decider.mood < 0.3:
+                    context += "EMOTIONAL STATE: Depressed/Fatigued. Prioritize stability.\n"
+                elif self.decider.mood > 0.8:
+                    context += "EMOTIONAL STATE: Manic/Energetic. Prioritize innovation.\n"
+                else:
+                    context += "EMOTIONAL STATE: Balanced.\n"
 
             # Motivation Check
             if motivation < 0.2:
