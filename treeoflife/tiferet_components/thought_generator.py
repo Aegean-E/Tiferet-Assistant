@@ -6,7 +6,7 @@ from ai_core.lm import compute_embedding, run_local_lm
 from ai_core.utils import parse_json_array_loose
 
 if TYPE_CHECKING:
-    from treeoflife.tiferet import Decider
+    from treeoflife.tiferet import Tiferet
 
 class ThinkingStrategy(Enum):
     AUTO = "auto"
@@ -16,7 +16,7 @@ class ThinkingStrategy(Enum):
     FIRST_PRINCIPLES = "first_principles"
 
 class ThoughtGenerator:
-    def __init__(self, decider: 'Decider'):
+    def __init__(self, decider: 'Tiferet'):
         self.decider = decider
 
     def perform_thinking_chain(self, topic: str, max_depth: int = 10, beam_width: int = 3, strategy: str = "auto"):

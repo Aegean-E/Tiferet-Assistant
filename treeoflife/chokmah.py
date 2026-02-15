@@ -10,8 +10,9 @@ from concurrent.futures import ThreadPoolExecutor
 from ai_core.lm import run_local_lm, extract_memories_llm, compute_embedding, _is_low_quality_candidate
 from ai_core.utils import parse_json_array_loose
 from docs.default_prompts import DAYDREAM_EXTRACTOR_PROMPT, DAYDREAM_INSTRUCTION
+from treeoflife.sephirah import Sephirah
 
-class Chokmah:
+class Chokmah(Sephirah):
     """
     Chokmah (Wisdom) - The Spark of Insight.
     
@@ -39,14 +40,14 @@ class Chokmah:
         internet_bridge: Optional[Any] = None,
         executor: Optional[ThreadPoolExecutor] = None
     ):
+        super().__init__("Chokmah", "Wisdom: The Spark of Insight", log_fn, event_bus)
         self.memory_store = memory_store
         self.document_store = document_store
         self.get_settings = get_settings_fn
-        self.log = log_fn
+        # self.log and self.event_bus handled by super
         self.stop_check = stop_check_fn or (lambda: False)
         self.get_gap_topic = get_gap_topic_fn
         self.embed_fn = embed_fn
-        self.event_bus = event_bus
         self.internet_bridge = internet_bridge
         self.executor = executor
 

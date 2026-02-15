@@ -28,6 +28,8 @@ try:
 except ImportError:
     DOWHY_AVAILABLE = False
 
+from treeoflife.sephirah import Sephirah
+
 class SensoryPacket:
     """Standardized return format for Malkuth actions."""
     def __init__(self, content: str, success: bool, metadata: dict = None):
@@ -113,12 +115,12 @@ class SimplePhysicsEngine:
             if not b["static"]: b["v"][0] += ix * b["inv_m"]; b["v"][1] += iy * b["inv_m"]
             self.log.append(f"[{self.t:.2f}s] Collision: {a['name']} <-> {b['name']}")
 
-class Malkuth:
+class Malkuth(Sephirah):
     def __init__(self, memory_store=None, meta_memory_store=None, log_fn=logging.info, event_bus=None):
+        super().__init__("Malkuth", "Kingdom: Causal Engine & Tools", log_fn, event_bus)
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
-        self.log = log_fn
-        self.event_bus = event_bus
+        # self.log and self.event_bus handled by super
         self.causal_graph = nx.DiGraph() if NX_AVAILABLE else None
         
         # Step 1: World Model Layer Persistence

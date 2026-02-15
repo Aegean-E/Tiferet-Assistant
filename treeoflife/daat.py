@@ -21,7 +21,9 @@ try:
 except ImportError:
     NX_AVAILABLE = False
 
-class Daat:
+from treeoflife.sephirah import Sephirah
+
+class Daat(Sephirah):
     """
     Da'at (Knowledge/Integration)
     
@@ -38,12 +40,13 @@ class Daat:
         embed_fn: Optional[Callable[[str], np.ndarray]] = None,
         log_fn: Callable[[str], None] = logging.info
     ):
+        super().__init__("Daat", "Knowledge: Integration & Synthesis", log_fn)
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
         self.reasoning_store = reasoning_store
         self.get_settings = get_settings_fn
         self.embed_fn = embed_fn
-        self.log = log_fn
+        # self.log handled by super
 
     def run_summarization(self):
         """

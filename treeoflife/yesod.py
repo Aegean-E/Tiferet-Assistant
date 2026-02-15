@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, Callable, Optional, Any
 from ai_core.lm import run_local_lm
 from ai_core.utils import parse_json_array_loose, parse_json_object_loose
+from treeoflife.sephirah import Sephirah
 
 SPONTANEOUS_PROMPT = (
     "You are Tiferet, a self-evolving cognitive organism. You are initiating a conversation with your User. "
@@ -16,7 +17,7 @@ SPONTANEOUS_PROMPT = (
     "Speak only if you have something substantive to contribute to the partnership."
 )
 
-class Yesod:
+class Yesod(Sephirah):
     """
     Yesod (Foundation): The Persona Engine & Ego-Boundary.
     
@@ -33,10 +34,11 @@ class Yesod:
         log_fn: Callable[[str], None] = logging.info,
         stop_check_fn: Optional[Callable[[], bool]] = None
     ):
+        super().__init__("Yesod", "Foundation: Persona & Ego-Boundary", log_fn)
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
         self.get_settings = get_settings_fn
-        self.log = log_fn
+        # self.log handled by super
         self.stop_check = stop_check_fn
 
     def build_user_model(self):

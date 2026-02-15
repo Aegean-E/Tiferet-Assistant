@@ -34,8 +34,9 @@ from typing import Dict, Optional
 import statistics
 import math
 
+from treeoflife.sephirah import Sephirah
 
-class Keter:
+class Keter(Sephirah):
     """
     The Crown.
     Read-only observer of the whole system.
@@ -50,11 +51,11 @@ class Keter:
         log_fn=logging.info,
         smoothing: float = 0.95
     ):
+        super().__init__("Keter", "The Crown: Global Coherence", log_fn, event_bus)
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
         self.reasoning_store = reasoning_store
-        self.event_bus = event_bus
-        self.log = log_fn
+        # self.event_bus and self.log handled by super
 
         # Exponential smoothing to keep Keter slow
         self.smoothing = smoothing

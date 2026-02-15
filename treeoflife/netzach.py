@@ -2,6 +2,7 @@ import time
 from typing import Dict, List, Callable, Optional, Any
 from ai_core.lm import run_local_lm
 from ai_core.utils import parse_json_object_loose
+from treeoflife.sephirah import Sephirah
 import json
 import logging
 
@@ -16,7 +17,7 @@ OBSERVER_SYSTEM_PROMPT = (
     "Persona: Mysterious, deep, essential. Do NOT speak. Do NOT act. Only signal."
 )
 
-class ContinuousObserver:
+class Netzach(Sephirah):
     """
     The 'Netzach' module: A constant background observer that monitors the 
     relationship between chat history, internal reasoning, and active goals.
@@ -41,6 +42,7 @@ class ContinuousObserver:
         check_reminders_fn: Optional[Callable[[], List[Dict]]] = None,
         epigenetics: Dict = None
     ):
+        super().__init__("Netzach", "Victory: Endurance & Observation", log_fn, event_bus)
         self.memory_store = memory_store
         self.reasoning_store = reasoning_store
         self.meta_memory_store = meta_memory_store
@@ -51,8 +53,7 @@ class ContinuousObserver:
         self.get_doc_logs = get_doc_logs_fn
         self.get_status = get_status_fn
         self.get_recent_docs = get_recent_docs_fn or (lambda: [])
-        self.log = log_fn
-        self.event_bus = event_bus
+        # self.log and self.event_bus handled by super
         self.stop_check = stop_check_fn
         self.check_reminders = check_reminders_fn
         self.epigenetics = epigenetics or {}
@@ -395,3 +396,4 @@ class ContinuousObserver:
                 source="netzach_theory_of_mind"
             )
             self.log(f"👁️ Netzach: User Model updated.")
+ContinuousObserver = Netzach

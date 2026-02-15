@@ -7,10 +7,10 @@ from ai_core.lm import run_local_lm
 from ai_core.utils import parse_json_array_loose
 
 if TYPE_CHECKING:
-    from treeoflife.tiferet import Decider
+    from treeoflife.tiferet import Tiferet
 
 class DecisionMaker:
-    def __init__(self, decider: 'Decider'):
+    def __init__(self, decider: 'Tiferet'):
         self.decider = decider
 
     def decide(self) -> Dict[str, Any]:

@@ -38,7 +38,9 @@ try:
 except ImportError:
     FAISS_AVAILABLE = False
 
-class Binah:
+from treeoflife.sephirah import Sephirah
+
+class Binah(Sephirah):
     """
     Binah (Understanding) - The Structure of Thought.
     Consolidates similar/duplicate memories to keep memory store clean.
@@ -51,9 +53,10 @@ class Binah:
                  get_settings_fn: Callable[[], Dict] = lambda: {},
                  embed_fn: Optional[Callable[[str], np.ndarray]] = None,
                  log_fn: Callable[[str], None] = logging.info):
+        super().__init__("Binah", "Understanding: Structure & Consolidation", log_fn)
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
-        self.log = log_fn
+        # self.log handled by super
         self.get_settings = get_settings_fn
         self.embed_fn = embed_fn
         

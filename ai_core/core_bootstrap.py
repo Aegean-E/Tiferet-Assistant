@@ -9,14 +9,14 @@ from docs.document_store_faiss import FaissDocumentStore
 from docs.document_processor import DocumentProcessor
 from bridges.internet_bridge import InternetBridge
 from .event_bus import EventBus
-from treeoflife.netzach import ContinuousObserver
+from treeoflife.netzach import Netzach
 from memory.memory import MemoryStore
 from memory.meta_memory import MetaMemoryStore
 from memory.reasoning import ReasoningStore
 from memory.memory_arbiter import MemoryArbiter
 from treeoflife.binah import Binah
 from treeoflife.chokmah import Chokmah
-from treeoflife.tiferet import Decider
+from treeoflife.tiferet import Tiferet
 from treeoflife.hod import Hod as HodAgent
 from treeoflife.daat import Daat
 from treeoflife.keter import Keter
@@ -513,7 +513,7 @@ class BootstrapManager:
                 except Exception as e: return f"❌ Error refuting memory: {e}"
 
             # Initialize Continuous Observer (Netzach)
-            self.core.observer = ContinuousObserver(
+            self.core.observer = Netzach(
                 memory_store=self.core.memory_store,
                 reasoning_store=self.core.reasoning_store,
                 meta_memory_store=self.core.meta_memory_store,
@@ -547,8 +547,8 @@ class BootstrapManager:
             )
             self.core.hod_force = self.core.hod
 
-            # Initialize Decider
-            self.core.decider = Decider(
+            # Initialize Decider (Tiferet)
+            self.core.decider = Tiferet(
                 get_settings_fn=self.core.get_settings,
                 update_settings_fn=self.core.update_settings,
                 memory_store=self.core.memory_store,
@@ -618,6 +618,21 @@ class BootstrapManager:
             
             # Restore Identity
             self.core.identity_manager.restore_subjective_continuity()
+
+            # Register Sephirot (Must be done after all components are initialized)
+            self.core.sephirot = {
+                "Keter": self.core.keter,
+                "Chokmah": self.core.chokmah,
+                "Binah": self.core.binah,
+                "Daat": self.core.daat,
+                "Hesed": self.core.hesed,
+                "Gevurah": self.core.gevurah,
+                "Tiferet": self.core.decider,
+                "Netzach": self.core.observer,
+                "Hod": self.core.hod,
+                "Yesod": self.core.yesod,
+                "Malkuth": self.core.malkuth
+            }
 
             logging.info("🧠 Brain initialized successfully (AICore).")
             

@@ -7,6 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, List, Optional, Any
 from ai_core.lm import run_local_lm, compute_embedding
+from treeoflife.sephirah import Sephirah
 
 HOD_SYSTEM_PROMPT = (
     "You are Hod, the Reflective Analyst of this cognitive architecture. "
@@ -20,7 +21,7 @@ HOD_SYSTEM_PROMPT = (
     "Persona: Concise, objective, critical, constructive. Do NOT use imperative verbs (e.g., 'Prune this'). Use descriptive language (e.g., 'Invalid Data Detected')."
 )
 
-class Hod:
+class Hod(Sephirah):
     def __init__(
         self,
         memory_store,
@@ -36,6 +37,7 @@ class Hod:
         event_bus: Optional[Any] = None,
         executor: Optional[ThreadPoolExecutor] = None
     ):
+        super().__init__("Hod", "Glory: Analysis & Verification", log_fn, event_bus)
         self.memory_store = memory_store
         self.meta_memory_store = meta_memory_store
         self.reasoning_store = reasoning_store
@@ -43,10 +45,9 @@ class Hod:
         self.get_settings = get_settings_fn
         self.get_main_logs = get_main_logs_fn
         self.get_doc_logs = get_doc_logs_fn
-        self.log = log_fn
+        # self.log and self.event_bus handled by super
         self.meta_learner = meta_learner
         self.embed_fn = embed_fn
-        self.event_bus = event_bus
         self.executor = executor
         self.state_file = "./data/hod_state.json"
         

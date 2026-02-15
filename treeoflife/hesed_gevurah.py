@@ -5,8 +5,9 @@ These are stateless functions (forces) that provide raw signals to Tiferet (Deci
 They do not decide. They inform.
 """
 import logging
+from treeoflife.sephirah import Sephirah
 
-class Hesed:
+class Hesed(Sephirah):
     """
     Hesed = Permission Budget (Expansion).
     Signal: 0.0 (Frozen) to 1.0 (Max Expansion).
@@ -14,9 +15,10 @@ class Hesed:
     "How much unverified novelty is allowed right now?"
     """
     def __init__(self, memory_store, keter, log_fn=logging.info, bias: float = 1.0):
+        super().__init__("Hesed", "Mercy: Permission & Expansion", log_fn)
         self.memory_store = memory_store
         self.keter = keter
-        self.log = log_fn  # Connect to UI Logger
+        # self.log handled by super
         self.bias = bias
         self.smoothed_value = 1.0 # Initialize to max permission
 
@@ -64,15 +66,16 @@ class Hesed:
         return final
 
 
-class Gevurah:
+class Gevurah(Sephirah):
     """
     Gevurah = Constraint Budget (Restriction).
     Signal: 0.0 (Relaxed) to 1.0 (Emergency Cut).
     """
     def __init__(self, memory_store, keter=None, log_fn=logging.info, bias: float = 1.0, meta_memory_store=None):
+        super().__init__("Gevurah", "Severity: Constraint & Pruning", log_fn)
         self.memory_store = memory_store
         self.keter = keter
-        self.log = log_fn  # Connect to UI Logger
+        # self.log handled by super
         self.bias = bias
         self.meta_memory_store = meta_memory_store
         self.recommendation = None # "DROP_GOAL", "SLEEP", etc.

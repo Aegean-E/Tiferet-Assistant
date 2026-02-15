@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Callable, Dict, Any, Optional, List
 from ai_core.lm import compute_embedding, run_local_lm, extract_memories_llm, count_tokens, LLMError, DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT
 from ai_core.utils import parse_json_array_loose
+from treeoflife.sephirah import Sephirah
 
 # Import components
 from treeoflife.tiferet_components.decision_maker import DecisionMaker
@@ -25,7 +26,7 @@ try:
 except ImportError:
     psutil = None
 
-class Decider:
+class Tiferet(Sephirah):
     """
     Autonomous decision module.
     Controls system parameters (Temperature) and operational modes (Daydream, Verification).
@@ -67,6 +68,7 @@ class Decider:
         global_workspace=None,
         executor=None
     ):
+        super().__init__("Tiferet", "Beauty: Executive Decision Maker", log_fn, event_bus)
         self.get_settings = get_settings_fn
         self.update_settings = update_settings_fn
         self.memory_store = memory_store
@@ -75,10 +77,9 @@ class Decider:
         self.arbiter = arbiter
         self.meta_memory_store = meta_memory_store
         self.actions = actions
-        self.log = log_fn
+        # self.log and self.event_bus handled by super
         self.chat_fn = chat_fn
         self.get_chat_history = get_chat_history_fn or (lambda: [])
-        self.event_bus = event_bus
         self.stop_check = stop_check_fn
         self.hesed = hesed
         self.gevurah = gevurah
@@ -390,3 +391,5 @@ class Decider:
 
     def manage_goals(self, allow_creation: bool = True, system_mode: str = "EXECUTION"):
         self.goal_manager.manage_goals(allow_creation, system_mode)
+
+Decider = Tiferet

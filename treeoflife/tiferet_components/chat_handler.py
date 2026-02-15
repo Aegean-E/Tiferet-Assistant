@@ -9,10 +9,10 @@ from ai_core.lm import compute_embedding, run_local_lm, extract_memories_llm, co
 from ai_core.utils import parse_json_array_loose
 
 if TYPE_CHECKING:
-    from treeoflife.tiferet import Decider
+    from treeoflife.tiferet import Tiferet
 
 class ChatHandler:
-    def __init__(self, decider: 'Decider'):
+    def __init__(self, decider: 'Tiferet'):
         self.decider = decider
 
     def process_chat_message(self, user_text: str, history: List[Dict], status_callback: Callable[[str], None] = None, image_path: Optional[str] = None, stop_check_fn: Callable[[], bool] = None, stream_callback: Callable[[str], None] = None) -> str:

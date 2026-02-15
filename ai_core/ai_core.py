@@ -90,6 +90,7 @@ class AICore:
         self.shutdown_event = threading.Event()
 
         # Components
+        self.sephirot = {} # Registry of all active Sephirot
         self.memory_store = None
         self.meta_memory_store = None
         self.document_store = None
@@ -256,6 +257,14 @@ class AICore:
         self.log("🛑 AICore: Initiating graceful shutdown...")
         self.shutdown_event.set()
         
+        # Shutdown Sephirot
+        for name, sephirah in self.sephirot.items():
+            try:
+                self.log(f"🛑 Shutting down {name}...")
+                sephirah.shutdown()
+            except Exception as e:
+                self.log(f"⚠️ Error shutting down {name}: {e}")
+
         if self.event_bus:
             self.event_bus.stop()
             
