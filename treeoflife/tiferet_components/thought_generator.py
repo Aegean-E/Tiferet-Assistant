@@ -117,17 +117,16 @@ class ThoughtGenerator:
         best_path = []
         settings = self.decider.get_settings()
 
-        for path in active_paths:
-            if self.decider.stop_check(): break
+        def expand_single_path(path):
+            if self.decider.stop_check(): return None
 
-            # Generate N possible next steps for this path
             path_str = "\n".join([f"Step {i+1}: {t}" for i, t in enumerate(path)])
-
             prompt = (
                 f"You are an AGI reasoning engine using Tree of Thoughts.\n"
                 f"{static_context}\n"
                 f"Current Path:\n{path_str}\n\n"
                 f"Generate {beam_width} distinct, valid next steps to advance reasoning towards a solution.\n"
+                "CRITICAL REVIEW: Ensure steps are logical, novel, and directly address the topic.\n"
                 "If a solution is reached, start the step with '[CONCLUSION]'.\n"
                 "Output JSON list of strings: [\"Step A...\", \"Step B...\", \"Step C...\"]"
             )
@@ -146,15 +145,19 @@ class ThoughtGenerator:
             if not next_steps:
                 next_steps = [response.strip()]
 
-            # Evaluation Phase (Scoring)
+            path_candidates = []
+            local_conclusion = None
+            local_best_path = []
+
             for step in next_steps:
                 if not isinstance(step, str): continue
 
                 # Check for conclusion
                 if "[CONCLUSION]" in step:
-                    final_conclusion = step.replace("[CONCLUSION]", "").strip()
-                    best_path = path + [step]
-                    break
+                    local_conclusion = step.replace("[CONCLUSION]", "").strip()
+                    local_best_path = path + [step]
+                    # Early exit for this path
+                    return [(path + [step], 1.0)], local_conclusion, local_best_path
 
                 # Score the step
                 eval_prompt = (
@@ -178,10 +181,38 @@ class ThoughtGenerator:
                 except:
                     score = 0.5
 
-                candidates.append((path + [step], score))
+                path_candidates.append((path + [step], score))
 
-            if final_conclusion:
-                break
+            return path_candidates, local_conclusion, local_best_path
+
+        # Execute in parallel if executor is available
+        if self.decider.executor and len(active_paths) > 1:
+            futures = [self.decider.executor.submit(expand_single_path, path) for path in active_paths]
+            for future in futures:
+                try:
+                    res = future.result()
+                    if res:
+                        p_candidates, p_conclusion, p_best_path = res
+                        candidates.extend(p_candidates)
+                        if p_conclusion:
+                            final_conclusion = p_conclusion
+                            best_path = p_best_path
+                            # If we found a conclusion, we can potentially stop early,
+                            # but let's gather all results to be safe or break?
+                            # For simplicity, we keep gathering but final_conclusion is set.
+                except Exception as e:
+                    self.decider.log(f"⚠️ Error expanding path: {e}")
+        else:
+            # Serial execution
+            for path in active_paths:
+                res = expand_single_path(path)
+                if res:
+                    p_candidates, p_conclusion, p_best_path = res
+                    candidates.extend(p_candidates)
+                    if p_conclusion:
+                        final_conclusion = p_conclusion
+                        best_path = p_best_path
+                        break
 
         return candidates, final_conclusion, best_path
 

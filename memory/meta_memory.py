@@ -36,8 +36,49 @@ class MetaMemoryStore:
         
         self.faiss_index = None
         self.meta_id_mapping = []
+
+        self._migrate_json_to_blob()
+
         if FAISS_AVAILABLE:
             self._build_faiss_index()
+
+    def _migrate_json_to_blob(self):
+        """Migrate legacy JSON embeddings to BLOB format for performance."""
+        try:
+            with self._connect() as con:
+                # Check if we have unmigrated embeddings
+                count = con.execute("SELECT COUNT(*) FROM meta_memories WHERE embedding IS NOT NULL AND embedding_blob IS NULL").fetchone()[0]
+
+            if count > 0:
+                logging.info(f"🔄 [Meta-Memory] Migrating {count} embeddings to binary format...")
+                batch_size = 1000
+
+                with self._connect() as con:
+                    cursor = con.execute("SELECT id, embedding FROM meta_memories WHERE embedding IS NOT NULL AND embedding_blob IS NULL")
+                    while True:
+                        rows = cursor.fetchmany(batch_size)
+                        if not rows: break
+
+                        current_batch = []
+                        for mid, emb_json in rows:
+                            try:
+                                emb = np.array(json.loads(emb_json), dtype='float32')
+                                current_batch.append((emb.tobytes(), mid))
+                            except Exception:
+                                continue
+
+                        if current_batch:
+                            try:
+                                with self.write_lock:
+                                    with self._connect() as con_write:
+                                        con_write.executemany("UPDATE meta_memories SET embedding_blob = ? WHERE id = ?", current_batch)
+                                        con_write.commit()
+                            except Exception as e:
+                                logging.error(f"❌ [Meta-Memory] Batch update failed: {e}")
+
+                logging.info("✅ [Meta-Memory] Migration complete.")
+        except Exception as e:
+            logging.error(f"❌ [Meta-Memory] Migration failed: {e}")
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.db_path)
@@ -79,6 +120,12 @@ class MetaMemoryStore:
             except sqlite3.OperationalError:
                 pass
 
+            # Migration: Add embedding_blob column for faster retrieval
+            try:
+                con.execute("ALTER TABLE meta_memories ADD COLUMN embedding_blob BLOB")
+            except sqlite3.OperationalError:
+                pass
+
             # Migration: Unify 'Decider' subject to 'Assistant'
             con.execute("UPDATE meta_memories SET subject = 'Assistant' WHERE subject = 'Decider'")
             con.execute("UPDATE meta_memories SET subject = 'Assistant' WHERE subject = 'Daat'")
@@ -104,16 +151,24 @@ class MetaMemoryStore:
             self.meta_id_mapping = []
 
             with self._connect() as con:
-                rows = con.execute("SELECT id, embedding FROM meta_memories WHERE embedding IS NOT NULL").fetchall()
+                rows = con.execute("SELECT id, embedding, embedding_blob FROM meta_memories WHERE embedding IS NOT NULL OR embedding_blob IS NOT NULL").fetchall()
             
             embeddings = []
             ids = []
             
             for r in rows:
-                if r[1]:
-                    emb = np.array(json.loads(r[1]), dtype='float32')
+                # r[0]=id, r[1]=json, r[2]=blob
+                try:
+                    if r[2]:
+                        emb = np.frombuffer(r[2], dtype='float32')
+                    elif r[1]:
+                        emb = np.array(json.loads(r[1]), dtype='float32')
+                    else:
+                        continue
                     embeddings.append(emb)
                     ids.append(r[0])
+                except:
+                    continue
             
             if embeddings:
                 dimension = len(embeddings[0])
@@ -138,14 +193,15 @@ class MetaMemoryStore:
             try:
                 emb = embed_fn(text)
                 emb_json = json.dumps(emb.tolist())
-                updates.append((emb_json, mid))
+                emb_blob = emb.tobytes()
+                updates.append((emb_json, emb_blob, mid))
             except Exception as e:
                 logging.error(f"⚠️ Failed to re-embed meta-memory {mid}: {e}")
         
         if updates:
             with self.write_lock:
                 with self._connect() as con:
-                    con.executemany("UPDATE meta_memories SET embedding = ? WHERE id = ?", updates)
+                    con.executemany("UPDATE meta_memories SET embedding = ?, embedding_blob = ? WHERE id = ?", updates)
                     con.commit()
             
             if FAISS_AVAILABLE:
@@ -192,10 +248,12 @@ class MetaMemoryStore:
         # Generate embedding
         embedding = None
         embedding_json = None
+        embedding_blob = None
         if self.embed_fn:
             try:
                 embedding = self.embed_fn(text)
                 embedding_json = json.dumps(embedding.tolist())
+                embedding_blob = embedding.tobytes()
             except Exception as e:
                 logging.error(f"⚠️ Failed to generate embedding for meta-memory: {e}")
 
@@ -214,9 +272,10 @@ class MetaMemoryStore:
                         metadata,
                         created_at,
                         embedding,
+                        embedding_blob,
                         affect
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     event_type.upper(),
                     memory_type.upper(),
@@ -229,6 +288,7 @@ class MetaMemoryStore:
                     metadata_json,
                     int(time.time()),
                     embedding_json,
+                    embedding_blob,
                     affect
                 ))
                 row_id = cur.lastrowid
@@ -439,15 +499,21 @@ class MetaMemoryStore:
         # 2. Slow Path: Linear Scan (Fallback)
         try:
             with self._connect() as con:
-                rows = con.execute("SELECT id, event_type, subject, text, created_at, embedding, affect FROM meta_memories WHERE embedding IS NOT NULL").fetchall()
+                rows = con.execute("SELECT id, event_type, subject, text, created_at, embedding, affect, embedding_blob FROM meta_memories WHERE embedding IS NOT NULL OR embedding_blob IS NOT NULL").fetchall()
             
             results = []
             q_norm = np.linalg.norm(query_embedding)
             
             for r in rows:
-                if not r[5]: continue
+                # r[5]=json, r[7]=blob
                 try:
-                    emb = np.array(json.loads(r[5]), dtype=float)
+                    if r[7]:
+                        emb = np.frombuffer(r[7], dtype='float32')
+                    elif r[5]:
+                        emb = np.array(json.loads(r[5]), dtype='float32')
+                    else:
+                        continue
+
                     emb_norm = np.linalg.norm(emb)
                     if q_norm > 0 and emb_norm > 0:
                         sim = np.dot(query_embedding, emb) / (q_norm * emb_norm)
