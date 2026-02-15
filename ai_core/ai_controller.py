@@ -624,6 +624,7 @@ class AIController:
         """Periodic memory consolidation"""
         # Initial delay to ensure startup logs are visible
         time.sleep(1)
+        last_optimize_time = 0
         
         while not self.ai_core.shutdown_event.is_set():
             try:
@@ -649,14 +650,17 @@ class AIController:
                     if pruned_count > 0:
                         logging.info(f"🧹 [Meta-Memory] Pruned {pruned_count} old events (ALL types).")
 
-                # Auto-vacuum to reclaim space
-                # Optimize Memory Store (Rebuild FAISS + Vacuum)
-                if self.ai_core.memory_store and hasattr(self.ai_core.memory_store, 'optimize'):
-                    self.ai_core.memory_store.optimize()
+                # Auto-vacuum to reclaim space (Once daily)
+                if time.time() - last_optimize_time > 86400:
+                    # Optimize Memory Store (Rebuild FAISS + Vacuum)
+                    if self.ai_core.memory_store and hasattr(self.ai_core.memory_store, 'optimize'):
+                        self.ai_core.memory_store.optimize()
 
-                # Optimize Document Store (Rebuild FAISS if needed)
-                if self.ai_core.document_store and hasattr(self.ai_core.document_store, 'optimize'):
-                    self.ai_core.document_store.optimize()
+                    # Optimize Document Store (Rebuild FAISS if needed)
+                    if self.ai_core.document_store and hasattr(self.ai_core.document_store, 'optimize'):
+                        self.ai_core.document_store.optimize()
+
+                    last_optimize_time = time.time()
 
                 # Periodic Reasoning Store Pruning
                 if self.ai_core.reasoning_store and hasattr(self.ai_core.reasoning_store, 'prune'):
