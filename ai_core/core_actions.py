@@ -265,7 +265,16 @@ class ActionManager:
                 op = type(node.op)
                 if op not in operators:
                     raise TypeError(f"Operator {op} not supported")
-                return operators[op](eval_node(node.left), eval_node(node.right))
+
+                left_val = eval_node(node.left)
+                right_val = eval_node(node.right)
+
+                # Security: Prevent CPU DoS via massive exponentiation
+                if op == ast.Pow:
+                    if isinstance(right_val, (int, float)) and abs(right_val) > 1000:
+                        raise ValueError(f"Exponent too large (max 1000)")
+
+                return operators[op](left_val, right_val)
             elif isinstance(node, ast.UnaryOp):
                 op = type(node.op)
                 if op not in operators:
