@@ -33,6 +33,7 @@ class MemoryStore:
         self.write_lock = threading.Lock()
         self.faiss_lock = threading.Lock()
         self._init_db()
+        self._migrate_embeddings()
         self.self_model = None # Injected later
         self.unsaved_faiss_changes = 0
         self.faiss_save_threshold = int(config.get("faiss_save_threshold", 50)) if config else 50
@@ -57,6 +58,38 @@ class MemoryStore:
         con = sqlite3.connect(self.db_path)
         con.execute("PRAGMA journal_mode=WAL;")
         return con
+
+    def _migrate_embeddings(self):
+        """Migrate legacy JSON embeddings to binary blobs."""
+        try:
+            with self._connect() as con:
+                # Check if we have any JSON embeddings (starting with '[')
+                # Use LIMIT 1 to check existence quickly
+                check = con.execute("SELECT 1 FROM memories WHERE embedding LIKE '[%' LIMIT 1").fetchone()
+                if not check:
+                    return
+
+                logging.info("📦 [Memory] Migrating legacy JSON embeddings to binary blobs...")
+
+                # Fetch all JSON embeddings
+                rows = con.execute("SELECT id, embedding FROM memories WHERE embedding LIKE '[%'").fetchall()
+
+                updates = []
+                for mid, emb_json in rows:
+                    try:
+                        if isinstance(emb_json, str):
+                            emb_array = np.array(json.loads(emb_json), dtype='float32')
+                            updates.append((emb_array.tobytes(), mid))
+                    except:
+                        continue
+
+                if updates:
+                    with self.write_lock:
+                        con.executemany("UPDATE memories SET embedding = ? WHERE id = ?", updates)
+                        con.commit()
+                    logging.info(f"✅ [Memory] Migrated {len(updates)} embeddings to binary.")
+        except Exception as e:
+            logging.error(f"⚠️ Migration failed: {e}")
 
     def _init_db(self) -> None:
         with self._connect() as con:
@@ -302,7 +335,11 @@ class MemoryStore:
                     for r in rows:
                         if r[1]:
                             try:
-                                emb = np.array(json.loads(r[1]), dtype='float32')
+                                # Handle binary blob or JSON
+                                if isinstance(r[1], bytes):
+                                    emb = np.frombuffer(r[1], dtype='float32')
+                                else:
+                                    emb = np.array(json.loads(r[1]), dtype='float32')
                                 embeddings.append(emb)
                                 ids.append(r[0])
                             except:
@@ -347,8 +384,9 @@ class MemoryStore:
         for mid, text in rows:
             try:
                 emb = embed_fn(text)
-                emb_json = json.dumps(emb.tolist())
-                updates.append((emb_json, mid))
+                # Store as binary blob
+                emb_blob = emb.tobytes()
+                updates.append((emb_blob, mid))
             except Exception as e:
                 logging.error(f"⚠️ Failed to re-embed memory {mid}: {e}")
         
@@ -475,6 +513,10 @@ class MemoryStore:
         
         if row and row[0]:
             try:
+                # Handle binary blob (new format)
+                if isinstance(row[0], bytes):
+                    return np.frombuffer(row[0], dtype='float32')
+                # Handle JSON string (legacy format)
                 return np.array(json.loads(row[0]), dtype='float32')
             except:
                 pass
@@ -524,7 +566,9 @@ class MemoryStore:
 
         conflicts_json = json.dumps(conflicts or [])
         timestamp = created_at if created_at is not None else int(time.time())
-        embedding_json = json.dumps(embedding.tolist()) if embedding is not None else None
+
+        # Binary embedding storage
+        embedding_blob = embedding.tobytes() if embedding is not None else None
 
         with self.write_lock:
             with self._connect() as con:
@@ -555,7 +599,7 @@ class MemoryStore:
                     source,
                     conflicts_json,
                     timestamp,
-                    embedding_json,
+                    embedding_blob,
                     progress,
                     affect,
                     epistemic_origin
@@ -863,8 +907,13 @@ class MemoryStore:
                     for r in rows:
                         if not r[4]: continue
                         try:
-                            emb = json.loads(r[4])
-                            if len(emb) != query_embedding.shape[0]:
+                            # Handle binary blob or JSON
+                            if isinstance(r[4], bytes):
+                                emb = np.frombuffer(r[4], dtype='float32')
+                            else:
+                                emb = np.array(json.loads(r[4]), dtype='float32')
+
+                            if emb.shape[0] != query_embedding.shape[0]:
                                 continue
                             embeddings.append(emb)
                             valid_rows.append(r)
@@ -945,7 +994,13 @@ class MemoryStore:
                     rows = cursor.fetchmany(1000)
                     if not rows: break
                     for r in rows:
-                        mem_emb = np.array(json.loads(r[1]))
+                        try:
+                            if isinstance(r[1], bytes):
+                                mem_emb = np.frombuffer(r[1], dtype='float32')
+                            else:
+                                mem_emb = np.array(json.loads(r[1]), dtype='float32')
+                        except: continue
+
                         if query_embedding.shape != mem_emb.shape: continue
                         m_norm = np.linalg.norm(mem_emb)
                         if m_norm > 0 and q_norm > 0:
@@ -1117,9 +1172,9 @@ class MemoryStore:
 
     def update_embedding(self, memory_id: int, embedding: np.ndarray) -> bool:
         """Update the embedding of a memory entry."""
-        embedding_json = json.dumps(embedding.tolist())
+        embedding_blob = embedding.tobytes()
         with self._connect() as con:
-            cur = con.execute("UPDATE memories SET embedding = ? WHERE id = ?", (embedding_json, memory_id))
+            cur = con.execute("UPDATE memories SET embedding = ? WHERE id = ?", (embedding_blob, memory_id))
             con.commit()
             
         if FAISS_AVAILABLE and self.faiss_index:
@@ -1498,9 +1553,13 @@ class MemoryStore:
                 for r in rows:
                     if not r[4]: continue
                     try:
-                        emb = json.loads(r[4])
+                        if isinstance(r[4], bytes):
+                            emb = np.frombuffer(r[4], dtype='float32')
+                        else:
+                            emb = np.array(json.loads(r[4]), dtype='float32')
+
                         # Check dimension
-                        if len(emb) != query_embedding.shape[0]:
+                        if emb.shape[0] != query_embedding.shape[0]:
                             continue
                         embeddings.append(emb)
                         valid_rows.append(r)
