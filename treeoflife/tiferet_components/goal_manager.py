@@ -34,6 +34,11 @@ class GoalManager:
         self.decider.log(f"🎯 Decider autonomously created GOAL (ID: {mid}): {content}")
         if hasattr(self.decider.meta_memory_store, 'add_event'):
             self.decider.meta_memory_store.add_event("GOAL_CREATED", "Assistant", f"Created Goal: {content}")
+
+        # NEW: Publish Event
+        if self.decider.event_bus:
+            self.decider.event_bus.publish("GOAL_CREATED", {"goal_id": mid, "content": content}, source="GoalManager", priority=8)
+
         return mid
 
     def run_autonomous_cycle(self):
@@ -268,5 +273,9 @@ class GoalManager:
                 self.decider.memory_store.update_type(gid, "ARCHIVED_GOAL")
                 self.decider.log(f"🗑️ Decider: Pruned low-value goal {gid}")
                 self.decider._track_metric("goal_abandonment", 1.0)
+
+                # NEW: Publish Event
+                if self.decider.event_bus:
+                     self.decider.event_bus.publish("GOAL_UPDATED", {"goal_id": gid, "status": "ARCHIVED", "content": f"Pruned Goal {gid}"}, source="GoalManager", priority=7)
             else:
                 self.decider.memory_store.update_confidence(gid, float(val))
