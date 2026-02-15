@@ -416,6 +416,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 "system_prompt": DEFAULT_SYSTEM_PROMPT,
                 "memory_extractor_prompt": DEFAULT_MEMORY_EXTRACTOR_PROMPT,
                 "daydream_extractor_prompt": DAYDREAM_EXTRACTOR_PROMPT,
+                "backup_dir": "./data/backups",
                 "permissions": {
                     "SEARCH": True, "WIKI": True, "FIND_PAPER": True, 
                     "CALCULATOR": True, "CLOCK": True, "SYSTEM_INFO": True,
