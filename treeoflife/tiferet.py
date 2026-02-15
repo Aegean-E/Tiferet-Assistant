@@ -2289,6 +2289,251 @@ class Decider:
         )
         return response.strip()
 
+    def _retrieve_context(self, user_text: str, settings: Dict, executor=None) -> Dict[str, Any]:
+        """
+        Retrieves context from various sources (Memory, Docs, Meta-Memory, Binah) in parallel.
+        """
+        local_executor = None
+        submit_fn = executor.submit if executor else None
+
+        if not submit_fn:
+            local_executor = ThreadPoolExecutor(max_workers=5)
+            submit_fn = local_executor.submit
+
+        try:
+            # 1. Start Embedding (Network)
+            future_embedding = submit_fn(
+                compute_embedding,
+                user_text,
+                settings.get("base_url"),
+                settings.get("embedding_model")
+            )
+
+            # 2. Start Memory Retrieval (DB)
+            t_retrieval = time.time()
+            def fetch_combined():
+                # Fetch recent non-daydream items (chat) and general recent items
+                chat_mems = self.memory_store.get_recent_filtered(limit=10, exclude_sources=['daydream'])
+                recent_mems = self.memory_store.list_recent(limit=5)
+                return chat_mems, recent_mems
+            future_combined = submit_fn(fetch_combined)
+            future_critical = submit_fn(self._get_critical_memories)
+            logging.debug(f"⏱️ [Tiferet] Memory retrieval submission took {time.time()-t_retrieval:.3f}s")
+
+            # 3. Start Summary Retrieval (DB)
+            def get_summary():
+                if hasattr(self.meta_memory_store, 'get_by_event_type'):
+                    summaries = self.meta_memory_store.get_by_event_type("SESSION_SUMMARY", limit=1)
+                    if summaries:
+                        return summaries[0]['text']
+                return ""
+            future_summary = submit_fn(get_summary)
+
+            # Wait for embedding to proceed with Semantic Search & RAG
+            query_embedding = future_embedding.result()
+
+            # 4. Start Semantic Search (FAISS/DB)
+            future_semantic = submit_fn(self.memory_store.search, query_embedding, limit=5, target_affect=self.mood)
+
+            # 4.5 Start Meta-Memory Semantic Search (Autobiographical Memory)
+            future_meta_semantic = submit_fn(self.meta_memory_store.search, query_embedding, limit=3)
+
+            # 5. Start RAG (FAISS/DB)
+            future_rag = None
+            if self._should_trigger_rag(user_text):
+                t_rag = time.time()
+                self.log(f"📚 [RAG] Initiating document search for: '{user_text}'")
+                def perform_rag():
+                    doc_results = self.document_store.search_chunks(query_embedding, top_k=5)
+                    filename_matches = self.document_store.search_filenames(user_text)
+                    return doc_results, filename_matches
+                future_rag = submit_fn(perform_rag)
+                logging.debug(f"⏱️ [Tiferet] RAG submission took {time.time()-t_rag:.3f}s")
+
+            # Gather all results
+            t_gather = time.time()
+            chat_items, recent_items = future_combined.result()
+            critical_items = future_critical.result()
+            summary_text = future_summary.result()
+            semantic_items = future_semantic.result()
+            meta_semantic_items = future_meta_semantic.result()
+
+            # --- Active Association via Binah ---
+            associative_items = []
+            # Only expand if semantic results are weak or few
+            if self.binah and semantic_items and (len(semantic_items) < 3 or semantic_items[0][4] < 0.8):
+                # Limit seeds to top 3 to reduce DB queries
+                seed_ids = [item[0] for item in semantic_items[:3]]
+                assoc_results = self.binah.expand_associative_context(seed_ids, limit=3)
+                # Convert to tuple format: (id, type, subject, text, similarity)
+                for res in assoc_results:
+                    # Use strength as similarity score
+                    associative_items.append((res['id'], res['type'], "Association", res['text'], res['strength']))
+
+                if associative_items:
+                    self.log(f"🔗 Binah: Expanded context with {len(associative_items)} associated memories.")
+
+            doc_results = []
+            filename_matches = []
+            if future_rag:
+                doc_results, filename_matches = future_rag.result()
+            logging.debug(f"⏱️ [Tiferet] Context gathering result wait took {time.time()-t_gather:.3f}s")
+
+            return {
+                "chat_items": chat_items,
+                "recent_items": recent_items,
+                "critical_items": critical_items,
+                "summary_text": summary_text,
+                "semantic_items": semantic_items,
+                "meta_semantic_items": meta_semantic_items,
+                "associative_items": associative_items,
+                "doc_results": doc_results,
+                "filename_matches": filename_matches
+            }
+        finally:
+            if local_executor:
+                local_executor.shutdown(wait=False)
+
+    def _construct_system_prompt(self, user_text: str, history: List[Dict], context_data: Dict[str, Any], settings: Dict) -> str:
+        """
+        Constructs the final system prompt by merging context items within the token budget.
+        """
+        # Unpack context
+        chat_items = context_data.get("chat_items", [])
+        recent_items = context_data.get("recent_items", [])
+        critical_items = context_data.get("critical_items", [])
+        summary_text = context_data.get("summary_text", "")
+        semantic_items = context_data.get("semantic_items", [])
+        meta_semantic_items = context_data.get("meta_semantic_items", [])
+        associative_items = context_data.get("associative_items", [])
+        doc_results = context_data.get("doc_results", [])
+        filename_matches = context_data.get("filename_matches", [])
+
+        # --- Token Budget Calculation ---
+        context_window = int(settings.get("context_window", 4096))
+        max_gen_tokens = int(settings.get("max_tokens", 800))
+        # Approx 3 chars per token for safety
+        total_budget_chars = context_window * 3
+
+        # Reserve space for System Prompt Base, User Text, History, and Generation (approx 2000 chars reserved)
+        history_chars = sum(len(m.get('content', '')) for m in history)
+        reserved_chars = len(settings.get("system_prompt", DEFAULT_SYSTEM_PROMPT)) + len(user_text) + history_chars + (max_gen_tokens * 3) + 500
+        available_chars = max(1000, total_budget_chars - reserved_chars)
+        self.log(f"💰 Context Budget: {available_chars} chars available for Memory/RAG (Window: {context_window})")
+
+        # Merge and deduplicate
+        memory_map = {}
+        for item in critical_items:
+            memory_map[item[0]] = item
+        for item in semantic_items:
+            memory_map[item[0]] = (item[0], item[1], item[2], item[3])
+        for item in recent_items:
+            memory_map[item[0]] = item
+        for item in chat_items:
+            memory_map[item[0]] = item
+
+        for item in associative_items:
+            if item[0] not in memory_map:
+                memory_map[item[0]] = (item[0], item[1], item[2], item[3])
+
+        final_memory_items = list(memory_map.values())
+
+        context_blocks = []
+
+        # Layer 1: Session Summary (High-level grounding)
+        if summary_text:
+            context_blocks.append(f"PREVIOUS SESSION SUMMARY:\n{summary_text}\n\n")
+
+        if final_memory_items:
+            user_mems = []
+            assistant_identities = []
+            assistant_goals = []
+            assistant_other = []
+            other_mems = []
+            autobiographical_mems = []
+
+            for item in final_memory_items:
+                _id, _type, subject, mem_text = item[:4]
+                if subject and subject.lower() == 'user':
+                    user_mems.append(f"- [{_type}] {mem_text}")
+                elif subject and subject.lower() == 'assistant':
+                    if _type == 'IDENTITY':
+                        assistant_identities.append(f"- {mem_text}")
+                    elif _type == 'GOAL':
+                        assistant_goals.append(f"- {mem_text}")
+                    else:
+                        assistant_other.append(f"- [{_type}] {mem_text}")
+                else:
+                    other_mems.append(f"- [{_type}] [{subject}] {mem_text}")
+
+            for m in meta_semantic_items:
+                # m is dict
+                autobiographical_mems.append(f"- [{m['event_type']}] {m['text']}")
+
+            mem_block = ""
+            if user_mems: mem_block += "User Profile (You are talking to):\n" + "\n".join(user_mems) + "\n\n"
+            if assistant_identities: mem_block += "Assistant Identity (Who you are):\n" + "\n".join(assistant_identities) + "\n\n"
+            if assistant_goals: mem_block += "CURRENT OBJECTIVES (Your internal goals):\n" + "\n".join(assistant_goals) + "\n\n"
+            if assistant_other: mem_block += "Assistant Knowledge/State:\n" + "\n".join(assistant_other) + "\n\n"
+            if autobiographical_mems: mem_block += "Autobiographical Context (Your History):\n" + "\n".join(autobiographical_mems) + "\n\n"
+            if other_mems: mem_block += "Other Context:\n" + "\n".join(other_mems) + "\n\n"
+            context_blocks.append(mem_block)
+
+        # 2. RAG: Retrieve Documents
+        if doc_results or filename_matches:
+            doc_context = "Relevant document information:\n"
+            if filename_matches:
+                doc_context += "Found documents with matching names:\n" + "\n".join([f"- {fn}" for fn in filename_matches]) + "\n\n"
+            if doc_results:
+                doc_context += "Relevant excerpts from content:\n"
+                for result in doc_results:
+                    excerpt = result['text'][:300]
+                    doc_context += f"- From '{result['filename']}': {excerpt}...\n"
+                doc_context += "\n"
+            context_blocks.append(doc_context)
+
+        # Apply Budget
+        memory_context = self._enforce_context_budget(context_blocks, available_chars)
+
+        # 3. Construct System Prompt
+        base_prompt = settings.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+        if self.yesod:
+            system_prompt = self.yesod.get_dynamic_system_prompt(base_prompt)
+        else:
+            system_prompt = base_prompt
+
+        # DYNAMIC STRATEGY INJECTION
+        # 1. Search for RULE/STRATEGY memories relevant to the user's input
+        active_rules = self.memory_store.get_active_by_type("RULE")
+
+        relevant_strategies = []
+        user_input_lower = user_text.lower()
+
+        for rule in active_rules:
+            # rule structure: (id, subject, text, source) from get_active_by_type
+            text = rule[2]
+            if "STRATEGY:" in text:
+                # Check trigger (simple heuristic: if any word in strategy text matches user input)
+                if any(word in user_input_lower for word in text.lower().split() if len(word) > 4):
+                    relevant_strategies.append(text)
+
+        if relevant_strategies:
+            system_prompt += "\n🧠 LEARNED STRATEGIES (APPLY THESE):\n" + "\n".join(relevant_strategies)
+
+        if memory_context:
+            system_prompt = memory_context + system_prompt
+
+        # Log final prompt length
+        prompt_tokens = count_tokens(system_prompt)
+        self.log(f"📝 Final Prompt: {len(system_prompt)} chars (~{prompt_tokens} tokens)")
+
+        # NEW: Self-Improvement Prompt (Appended after memory context)
+        self_improvement_prompt = settings.get("self_improvement_prompt", "")
+        if self_improvement_prompt:
+            system_prompt += "\n\n" + self_improvement_prompt
+
+        return system_prompt
+
     def handle_natural_language_command(self, text: str, status_callback: Callable[[str], None] = None) -> Optional[str]:
         """Check for and execute natural language commands."""
         text = text.lower().strip()
@@ -2536,228 +2781,13 @@ class Decider:
 
         settings = self.get_settings()
         
-        # Parallelize Context Retrieval to reduce latency
-        # Use shared executor if available to prevent thread explosion
-        local_executor = None
-        submit_fn = self.executor.submit if self.executor else None
+        # 1. Retrieve Context
+        context_data = self._retrieve_context(user_text, settings, executor=self.executor)
         
-        if not submit_fn:
-            local_executor = ThreadPoolExecutor(max_workers=5)
-            submit_fn = local_executor.submit
+        # 2. Construct System Prompt
+        system_prompt = self._construct_system_prompt(user_text, history, context_data, settings)
 
-        try:
-            # 1. Start Embedding (Network)
-            future_embedding = submit_fn(
-                compute_embedding, 
-                user_text, 
-                settings.get("base_url"), 
-                settings.get("embedding_model")
-            )
-            
-            # 2. Start Memory Retrieval (DB)
-            t_retrieval = time.time()
-            def fetch_combined():
-                # Fetch recent non-daydream items (chat) and general recent items
-                chat_mems = self.memory_store.get_recent_filtered(limit=10, exclude_sources=['daydream'])
-                recent_mems = self.memory_store.list_recent(limit=5)
-                return chat_mems, recent_mems
-            future_combined = submit_fn(fetch_combined)
-            future_critical = submit_fn(self._get_critical_memories)
-            logging.debug(f"⏱️ [Tiferet] Memory retrieval submission took {time.time()-t_retrieval:.3f}s")
-            
-            # 3. Start Summary Retrieval (DB)
-            def get_summary():
-                if hasattr(self.meta_memory_store, 'get_by_event_type'):
-                    summaries = self.meta_memory_store.get_by_event_type("SESSION_SUMMARY", limit=1)
-                    if summaries:
-                        return summaries[0]['text']
-                return ""
-            future_summary = submit_fn(get_summary)
-            
-            # Wait for embedding to proceed with Semantic Search & RAG
-            query_embedding = future_embedding.result()
-            
-            # 4. Start Semantic Search (FAISS/DB)
-            future_semantic = submit_fn(self.memory_store.search, query_embedding, limit=5, target_affect=self.mood)
-            
-            # 4.5 Start Meta-Memory Semantic Search (Autobiographical Memory)
-            future_meta_semantic = submit_fn(self.meta_memory_store.search, query_embedding, limit=3)
-            
-            # 5. Start RAG (FAISS/DB)
-            future_rag = None
-            if self._should_trigger_rag(user_text):
-                t_rag = time.time()
-                self.log(f"📚 [RAG] Initiating document search for: '{user_text}'")
-                def perform_rag():
-                    doc_results = self.document_store.search_chunks(query_embedding, top_k=5)
-                    filename_matches = self.document_store.search_filenames(user_text)
-                    return doc_results, filename_matches
-                future_rag = submit_fn(perform_rag)
-                logging.debug(f"⏱️ [Tiferet] RAG submission took {time.time()-t_rag:.3f}s")
-            
-            # Gather all results
-            t_gather = time.time()
-            chat_items, recent_items = future_combined.result()
-            critical_items = future_critical.result()
-            summary_text = future_summary.result()
-            semantic_items = future_semantic.result()
-            meta_semantic_items = future_meta_semantic.result()
-            
-            # --- Active Association via Binah ---
-            associative_items = []
-            # Only expand if semantic results are weak or few
-            if self.binah and semantic_items and (len(semantic_items) < 3 or semantic_items[0][4] < 0.8):
-                # Limit seeds to top 3 to reduce DB queries
-                seed_ids = [item[0] for item in semantic_items[:3]]
-                assoc_results = self.binah.expand_associative_context(seed_ids, limit=3)
-                # Convert to tuple format: (id, type, subject, text, similarity)
-                for res in assoc_results:
-                    # Use strength as similarity score
-                    associative_items.append((res['id'], res['type'], "Association", res['text'], res['strength']))
-                
-                if associative_items:
-                    self.log(f"🔗 Binah: Expanded context with {len(associative_items)} associated memories.")
-            
-            doc_results = []
-            filename_matches = []
-            if future_rag:
-                doc_results, filename_matches = future_rag.result()
-            logging.debug(f"⏱️ [Tiferet] Context gathering result wait took {time.time()-t_gather:.3f}s")
-        finally:
-            if local_executor:
-                local_executor.shutdown(wait=False)
-
-        # --- Token Budget Calculation ---
-        context_window = int(settings.get("context_window", 4096))
-        max_gen_tokens = int(settings.get("max_tokens", 800))
-        # Approx 3 chars per token for safety
-        total_budget_chars = context_window * 3
-        
-        # Reserve space for System Prompt Base, User Text, History, and Generation (approx 2000 chars reserved)
-        history_chars = sum(len(m.get('content', '')) for m in history)
-        reserved_chars = len(settings.get("system_prompt", DEFAULT_SYSTEM_PROMPT)) + len(user_text) + history_chars + (max_gen_tokens * 3) + 500
-        available_chars = max(1000, total_budget_chars - reserved_chars)
-        self.log(f"💰 Context Budget: {available_chars} chars available for Memory/RAG (Window: {context_window})")
-
-        # Merge and deduplicate
-        memory_map = {}
-        for item in critical_items:
-            memory_map[item[0]] = item
-        for item in semantic_items:
-            memory_map[item[0]] = (item[0], item[1], item[2], item[3])
-        for item in recent_items:
-            memory_map[item[0]] = item
-        for item in chat_items:
-            memory_map[item[0]] = item
-        
-        # Add Meta-Memories (Autobiographical)
-        for item in meta_semantic_items:
-            # item is dict: {'id', 'event_type', 'subject', 'text', ...}
-            # Convert to tuple format for consistency in display logic or handle separately
-            # We'll add them to a separate list for context construction
-            pass
-
-        for item in associative_items:
-            if item[0] not in memory_map:
-                memory_map[item[0]] = (item[0], item[1], item[2], item[3])
-
-        final_memory_items = list(memory_map.values())
-        
-        context_blocks = []
-        
-        # Layer 1: Session Summary (High-level grounding)
-        if summary_text:
-            context_blocks.append(f"PREVIOUS SESSION SUMMARY:\n{summary_text}\n\n")
-
-        if final_memory_items:
-            user_mems = []
-            assistant_identities = []
-            assistant_goals = []
-            assistant_other = []
-            other_mems = []
-            autobiographical_mems = []
-            
-            for item in final_memory_items:
-                _id, _type, subject, mem_text = item[:4]
-                if subject and subject.lower() == 'user':
-                    user_mems.append(f"- [{_type}] {mem_text}")
-                elif subject and subject.lower() == 'assistant':
-                    if _type == 'IDENTITY':
-                        assistant_identities.append(f"- {mem_text}")
-                    elif _type == 'GOAL':
-                        assistant_goals.append(f"- {mem_text}")
-                    else:
-                        assistant_other.append(f"- [{_type}] {mem_text}")
-                else:
-                    other_mems.append(f"- [{_type}] [{subject}] {mem_text}")
-            
-            for m in meta_semantic_items:
-                # m is dict
-                autobiographical_mems.append(f"- [{m['event_type']}] {m['text']}")
-            
-            mem_block = ""
-            if user_mems: mem_block += "User Profile (You are talking to):\n" + "\n".join(user_mems) + "\n\n"
-            if assistant_identities: mem_block += "Assistant Identity (Who you are):\n" + "\n".join(assistant_identities) + "\n\n"
-            if assistant_goals: mem_block += "CURRENT OBJECTIVES (Your internal goals):\n" + "\n".join(assistant_goals) + "\n\n"
-            if assistant_other: mem_block += "Assistant Knowledge/State:\n" + "\n".join(assistant_other) + "\n\n"
-            if autobiographical_mems: mem_block += "Autobiographical Context (Your History):\n" + "\n".join(autobiographical_mems) + "\n\n"
-            if other_mems: mem_block += "Other Context:\n" + "\n".join(other_mems) + "\n\n"
-            context_blocks.append(mem_block)
-
-        # 2. RAG: Retrieve Documents
-        if doc_results or filename_matches:
-            doc_context = "Relevant document information:\n"
-            if filename_matches:
-                doc_context += "Found documents with matching names:\n" + "\n".join([f"- {fn}" for fn in filename_matches]) + "\n\n"
-            if doc_results:
-                doc_context += "Relevant excerpts from content:\n"
-                for result in doc_results:
-                    excerpt = result['text'][:300]
-                    doc_context += f"- From '{result['filename']}': {excerpt}...\n"
-                doc_context += "\n"
-            context_blocks.append(doc_context)
-
-        # Apply Budget
-        memory_context = self._enforce_context_budget(context_blocks, available_chars)
-
-        # 3. Construct System Prompt
-        base_prompt = settings.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-        if self.yesod:
-            system_prompt = self.yesod.get_dynamic_system_prompt(base_prompt)
-        else:
-            system_prompt = base_prompt
-
-        # DYNAMIC STRATEGY INJECTION
-        # 1. Search for RULE/STRATEGY memories relevant to the user's input
-        active_rules = self.memory_store.get_active_by_type("RULE")
-        
-        relevant_strategies = []
-        user_input_lower = user_text.lower()
-        
-        for rule in active_rules:
-            # rule structure: (id, subject, text, source) from get_active_by_type
-            text = rule[2] 
-            if "STRATEGY:" in text:
-                # Check trigger (simple heuristic: if any word in strategy text matches user input)
-                if any(word in user_input_lower for word in text.lower().split() if len(word) > 4):
-                    relevant_strategies.append(text)
-        
-        if relevant_strategies:
-            system_prompt += "\n🧠 LEARNED STRATEGIES (APPLY THESE):\n" + "\n".join(relevant_strategies)
-            
-        if memory_context:
-            system_prompt = memory_context + system_prompt
-
-        # Log final prompt length
-        prompt_tokens = count_tokens(system_prompt)
-        self.log(f"📝 Final Prompt: {len(system_prompt)} chars (~{prompt_tokens} tokens)")
-
-        # NEW: Self-Improvement Prompt (Appended after memory context)
-        self_improvement_prompt = settings.get("self_improvement_prompt", "")
-        if self_improvement_prompt:
-            system_prompt += "\n\n" + self_improvement_prompt
-
-        # 4. Call LLM with structured error handling
+        # 3. Call LLM with structured error handling
         try:
             start_time = time.time()
             reply = run_local_lm(
@@ -2780,11 +2810,11 @@ class Decider:
         if self.keter:
             self.keter.track_response_metrics(latency, len(reply))
         
-        # 4.5 Manifest Persona (Yesod)
+        # 4. Manifest Persona (Yesod)
         if self.yesod:
             reply = self.yesod.manifest_persona(reply, self.mood)
 
-        # 4.6 Recursive Theory of Mind (Self-Model of User's Model)
+        # 5. Recursive Theory of Mind (Self-Model of User's Model)
         # Simulate user perception before finalizing (or just for reflection)
         if self.yesod:
             try:
@@ -2818,7 +2848,7 @@ class Decider:
                 self.log(f"⚠️ Chat tool execution failed: {e}")
                 self._track_metric("tool_success", 0.0)
 
-        # 5. Memory Extraction (Side Effect)
+        # 6. Memory Extraction (Side Effect)
         # Run in background thread to unblock UI response
         def background_processing():
             if status_callback: status_callback("Extracting memories...")
@@ -2842,11 +2872,11 @@ class Decider:
                 # Register the chat interaction as an outcome
                 self.malkuth.register_outcome("Chat Interaction", "Reply to user", f"User: {user_text}\nAssistant: {reply}")
             
-            # 6. Update Theory of Mind (User Model)
+            # 7. Update Theory of Mind (User Model)
             if self.yesod:
                 self.yesod.analyze_user_interaction(user_text, reply)
             
-            # 7. Metacognitive Reflection
+            # 8. Metacognitive Reflection
             self._reflect_on_decision(user_text, reply)
         
         if self.executor:
