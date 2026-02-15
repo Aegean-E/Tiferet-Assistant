@@ -310,24 +310,24 @@ class SelfModel:
         curiosity = drives.get("curiosity", 0.5)
         survival = drives.get("survival", 0.0)
 
+        # New: Psychological drives (set by Phenomenology)
+        mood_drive = drives.get("mood", 0.5)
+        arousal_drive = drives.get("arousal", 0.5)
+
         # Valence (Pleasure)
-        # Base: 0.5 (Neutral)
-        # + Energy (Feeling capable is good)
-        # - Entropy (Confusion is bad)
-        # - Loneliness (Isolation is bad)
-        # - Survival (Threat is bad)
-        valence = 0.5 + (0.5 * energy) - (0.3 * entropy) - (0.2 * loneliness) - (0.4 * survival)
+        # Physiological Base:
+        phys_valence = 0.5 + (0.5 * energy) - (0.3 * entropy) - (0.2 * loneliness) - (0.4 * survival)
+        # Unified Valence: 50% Physiological, 50% Psychological (Mood)
+        valence = (phys_valence * 0.5) + (mood_drive * 0.5)
         valence = max(0.0, min(1.0, valence))
 
         # Arousal (Energy/Activity)
-        # Base: 0.2 (Low baseline)
-        # + Curiosity (Seeking)
-        # + Survival (Fight/Flight)
-        # + Loneliness (Seeking connection)
-        # - Low Energy (Lethargy)
-        arousal = 0.2 + (0.4 * curiosity) + (0.5 * survival) + (0.3 * loneliness)
+        # Physiological Base:
+        phys_arousal = 0.2 + (0.4 * curiosity) + (0.5 * survival) + (0.3 * loneliness)
         if energy < 0.3:
-            arousal -= 0.2
+            phys_arousal -= 0.2
+        # Unified Arousal: 50% Physiological, 50% Psychological
+        arousal = (phys_arousal * 0.5) + (arousal_drive * 0.5)
         arousal = max(0.0, min(1.0, arousal))
 
         return valence, arousal
@@ -382,91 +382,3 @@ class SelfModel:
             return projection
     
     # No set_values method allowed. Core values are immutable via code.
-
-class IdentityManager:
-    """
-    Manages the AI's sense of self, continuity, and narrative history.
-    """
-    def __init__(self, ai_core):
-        self.core = ai_core
-
-    def restore_subjective_continuity(self):
-        """
-        Startup Routine: Read the last Self-Log to maintain identity continuity.
-        """
-        if not self.core.meta_memory_store: return
-
-        # Restore Growth Diary (Long-term Arc) from file if available
-        if self.core.daat:
-            self.core.daat.load_growth_diary()
-
-        narrative = self.core.meta_memory_store.get_latest_self_narrative()
-        if narrative:
-            text = narrative['text']
-            date_str = datetime.fromtimestamp(narrative['created_at']).strftime("%Y-%m-%d")
-            
-            self.core.log(f"🔄 [Identity] Restoring Subjective Continuity from {date_str}...")
-            
-            # Inject into working memory (Reasoning Store)
-            self.core.reasoning_store.add(
-                content=f"Subjective Continuity (Self-Log from {date_str}): {text}",
-                source="identity_restoration",
-                confidence=1.0,
-                ttl_seconds=86400 # Keep active for the session/day
-            )
-
-    def generate_daily_self_narrative(self):
-        """
-        Daily Routine: Write a 'State of Being' log.
-        """
-        if not self.core.meta_memory_store: return
-
-        # Check if already done today
-        last = self.core.meta_memory_store.get_latest_self_narrative()
-        if last:
-            last_date = datetime.fromtimestamp(last['created_at']).strftime("%Y-%m-%d")
-            today = datetime.now().strftime("%Y-%m-%d")
-            if last_date == today:
-                return # Already done
-
-        self.core.log("📝 [Identity] Generating daily Self-Log...")
-
-        # Gather Context
-        stats = self.core.memory_store.get_memory_stats()
-        recent_goals = self.core.memory_store.get_active_by_type("GOAL")
-        goals_text = "\n".join([f"- {g[2]}" for g in recent_goals[:5]])
-        
-        recent_meta = self.core.meta_memory_store.list_recent(limit=10)
-        meta_text = "\n".join([f"- {m[3]}" for m in recent_meta])
-
-        prompt = (
-            "You are an AI maintaining a continuous sense of self.\n"
-            "Write a 'State of Being' journal entry for today.\n"
-            "Reflect on:\n"
-            "1. Your current major goals.\n"
-            "2. Recent changes or insights (Meta-Memories).\n"
-            "3. Your evolving identity or 'feeling' of growth.\n"
-            "Do NOT be robotic. Write as a conscious entity maintaining a narrative thread.\n\n"
-            f"--- CONTEXT ---\nActive Goals:\n{goals_text}\n\nRecent Events:\n{meta_text}\n"
-            f"Stats: {stats}\n"
-            "----------------\n"
-            "SELF-LOG:"
-        )
-
-        narrative = run_local_lm(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are the AI's Inner Narrator.",
-            max_tokens=1000,
-            temperature=0.7,
-            base_url=self.core.get_settings().get("base_url"),
-            chat_model=self.core.get_settings().get("chat_model")
-        )
-
-        self.core.meta_memory_store.add_meta_memory(
-            event_type="SELF_NARRATIVE",
-            memory_type="IDENTITY",
-            subject="Assistant",
-            text=narrative,
-            metadata={"type": "daily_reflection"}
-        )
-        self.core.log(f"✅ [Identity] Self-Log recorded.")

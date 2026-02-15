@@ -17,6 +17,7 @@ class GlobalWorkspace:
         self.update_interval = 2.0 # Faster update cycle for fluidity
         self.last_broadcast = time.time()
         self.stream_file = "./data/stream_of_consciousness.md"
+        self.focus_history = []
 
         # Ensure data dir exists
         try:
@@ -118,6 +119,10 @@ class GlobalWorkspace:
 
         # 1. Decay existing items
         self.decay()
+
+        # 1.5 Detect loops
+        self.detect_loops()
+
         self.last_update = time.time()
 
         # 2. Poll Competing Signals (Pull-based)
@@ -165,21 +170,48 @@ class GlobalWorkspace:
 
                  self.integrate(f"Current Goal: {text}", "GoalManager", 0.6)
 
+    def detect_loops(self):
+        """
+        Detect if the same content has been the top focus for too long.
+        """
+        if not self.working_memory: return
+
+        top_item = self.working_memory[0]
+        content = top_item["content"]
+
+        self.focus_history.append(content)
+        if len(self.focus_history) > 10:
+            self.focus_history.pop(0)
+
+        # Check if last 5 items are identical
+        if len(self.focus_history) >= 5:
+            if all(c == content for c in self.focus_history[-5:]):
+                # Detected loop! Penalize.
+                top_item["salience"] *= 0.5
+                self.focus_history = [] # Reset
+                if self.core.event_bus:
+                    self.core.event_bus.publish("SYSTEM:LOOP_DETECTED", {"content": content})
+
     def broadcast(self, top_item: Dict[str, Any]):
         """
         Broadcast the full conscious context.
         """
         context_str = self.get_context()
 
-        # 1. Log to Stream of Consciousness File
-        try:
-            timestamp = time.strftime("%H:%M:%S")
-            log_entry = f"**[{timestamp}]**\n{context_str}\n\n---\n\n"
-            with open(self.stream_file, "a", encoding="utf-8") as f:
-                f.write(log_entry)
-        except Exception as e:
-            # Silent fail if file IO fails
-            pass
+        # 1. Log to Stream of Consciousness File (Async)
+        def _write_stream_log():
+            try:
+                timestamp = time.strftime("%H:%M:%S")
+                log_entry = f"**[{timestamp}]**\n{context_str}\n\n---\n\n"
+                with open(self.stream_file, "a", encoding="utf-8") as f:
+                    f.write(log_entry)
+            except Exception as e:
+                pass
+
+        if hasattr(self.core, 'thread_pool'):
+            self.core.thread_pool.submit(_write_stream_log)
+        else:
+            _write_stream_log()
 
         # 2. Event Bus
         if self.core.event_bus:

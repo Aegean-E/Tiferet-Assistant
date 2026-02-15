@@ -14,7 +14,7 @@ from .lm import compute_embedding, run_local_lm, configure_lm
 from .core_autonomy import AutonomyManager
 from .core_actions import ActionManager
 from .core_bootstrap import BootstrapManager
-from .core_self_model import SelfModel, IdentityManager
+from .core_self_model import SelfModel
 from .core_stability import StabilityController
 from .heartbeat import Heartbeat
 from .core_drives import DriveSystem
@@ -124,7 +124,6 @@ class AICore:
         self.global_workspace = None
 
         self.current_embedding_model = self.get_settings().get("embedding_model")
-        self.identity_manager = IdentityManager(self)
         self.autonomy_manager = AutonomyManager(self)
         self.action_manager = ActionManager(self)
         self.bootstrap_manager = BootstrapManager(self)
@@ -191,10 +190,12 @@ class AICore:
         self.autonomy_manager.run_evolution_cycle()
 
     def restore_subjective_continuity(self):
-        self.identity_manager.restore_subjective_continuity()
+        if self.daat:
+            self.daat.restore_subjective_continuity()
 
     def generate_daily_self_narrative(self):
-        self.identity_manager.generate_daily_self_narrative()
+        if self.daat:
+            self.daat.generate_daily_self_narrative()
 
     def run_autonomous_agency_check(self, observation):
         self.autonomy_manager.run_autonomous_agency_check(observation)

@@ -617,7 +617,8 @@ class BootstrapManager:
                 self.core.thread_pool.submit(self.core.hod.reflect, "System Startup")
             
             # Restore Identity
-            self.core.identity_manager.restore_subjective_continuity()
+            if self.core.daat:
+                self.core.daat.restore_subjective_continuity()
 
             logging.info("🧠 Brain initialized successfully (AICore).")
             

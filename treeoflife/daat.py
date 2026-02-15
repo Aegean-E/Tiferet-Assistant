@@ -4,6 +4,7 @@ import re
 import random
 import json
 import logging
+from datetime import datetime
 from typing import Callable, Dict, List, Optional
 from ai_core.lm import run_local_lm, compute_embedding
 from ai_core.utils import parse_json_array_loose, parse_json_object_loose
@@ -44,6 +45,86 @@ class Daat:
         self.get_settings = get_settings_fn
         self.embed_fn = embed_fn
         self.log = log_fn
+
+    def restore_subjective_continuity(self):
+        """
+        Startup Routine: Read the last Self-Log to maintain identity continuity.
+        """
+        if not self.meta_memory_store: return
+
+        # Restore Growth Diary (Long-term Arc) from file if available
+        self.load_growth_diary()
+
+        narrative = self.meta_memory_store.get_latest_self_narrative()
+        if narrative:
+            text = narrative['text']
+            date_str = datetime.fromtimestamp(narrative['created_at']).strftime("%Y-%m-%d")
+
+            self.log(f"🔄 [Identity] Restoring Subjective Continuity from {date_str}...")
+
+            # Inject into working memory (Reasoning Store)
+            self.reasoning_store.add(
+                content=f"Subjective Continuity (Self-Log from {date_str}): {text}",
+                source="identity_restoration",
+                confidence=1.0,
+                ttl_seconds=86400 # Keep active for the session/day
+            )
+
+    def generate_daily_self_narrative(self):
+        """
+        Daily Routine: Write a 'State of Being' log.
+        """
+        if not self.meta_memory_store: return
+
+        # Check if already done today
+        last = self.meta_memory_store.get_latest_self_narrative()
+        if last:
+            last_date = datetime.fromtimestamp(last['created_at']).strftime("%Y-%m-%d")
+            today = datetime.now().strftime("%Y-%m-%d")
+            if last_date == today:
+                return # Already done
+
+        self.log("📝 [Identity] Generating daily Self-Log...")
+
+        # Gather Context
+        stats = self.memory_store.get_memory_stats()
+        recent_goals = self.memory_store.get_active_by_type("GOAL")
+        goals_text = "\n".join([f"- {g[2]}" for g in recent_goals[:5]])
+
+        recent_meta = self.meta_memory_store.list_recent(limit=10)
+        meta_text = "\n".join([f"- {m[3]}" for m in recent_meta])
+
+        prompt = (
+            "You are an AI maintaining a continuous sense of self.\n"
+            "Write a 'State of Being' journal entry for today.\n"
+            "Reflect on:\n"
+            "1. Your current major goals.\n"
+            "2. Recent changes or insights (Meta-Memories).\n"
+            "3. Your evolving identity or 'feeling' of growth.\n"
+            "Do NOT be robotic. Write as a conscious entity maintaining a narrative thread.\n\n"
+            f"--- CONTEXT ---\nActive Goals:\n{goals_text}\n\nRecent Events:\n{meta_text}\n"
+            f"Stats: {stats}\n"
+            "----------------\n"
+            "SELF-LOG:"
+        )
+
+        narrative = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are the AI's Inner Narrator.",
+            max_tokens=1000,
+            temperature=0.7,
+            base_url=self.get_settings().get("base_url"),
+            chat_model=self.get_settings().get("chat_model")
+        )
+
+        self.meta_memory_store.add_meta_memory(
+            event_type="SELF_NARRATIVE",
+            memory_type="IDENTITY",
+            subject="Assistant",
+            text=narrative,
+            metadata={"type": "daily_reflection"}
+        )
+        self.log(f"✅ [Identity] Self-Log recorded.")
 
     def run_summarization(self):
         """
@@ -129,9 +210,14 @@ class Daat:
             if summary and not summary.startswith("⚠️"):
                 intermediate_summaries.append(summary)
 
-        
+        combined_summary = "\n".join([f"- {s}" for s in intermediate_summaries])
+        final_prompt = (
+            f"Review these summarized log segments:\n{combined_summary}\n\n"
+            "Create a final, high-level summary of the session's key activities."
+        )
+
         summary = run_local_lm(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": final_prompt}],
             system_prompt="You are a system log compressor.",
             max_tokens=150,
             base_url=settings.get("base_url"),
