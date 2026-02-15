@@ -518,120 +518,6 @@ def clear_embedding_cache():
 # Memory extraction
 # ==============================
 
-def extract_memories_llm(
-        user_text: str,
-        assistant_text: str,
-        force: bool = False,
-        auto: bool = False,
-        base_url: str = LM_STUDIO_BASE_URL,
-        chat_model: str = CHAT_MODEL,
-        embedding_model: str = EMBEDDING_MODEL,
-        memory_extractor_prompt: str = MEMORY_EXTRACTOR_PROMPT,
-        custom_instruction: str = None,
-        stop_check_fn: Optional[Callable[[], bool]] = None
-) -> Tuple[List[Dict], List[np.ndarray]]:
-    """
-    Extract memories with subject/type.
-    Returns (memories_list, embeddings_list)
-    """
-    if custom_instruction:
-        instruction = custom_instruction
-    elif force:
-        instruction = (
-            "Extract ALL valid durable memories NOW, including:\n"
-            "- User facts: names, locations, occupations, preferences, goals\n"
-            "- Assistant self-statements: chosen names, preferences, goals\n"
-            "- Explicit permissions granted by user\n"
-            "Do NOT include: greetings, questions, filler, echoes.\n"
-            "Output ONLY valid JSON array."
-        )
-    else:
-        # Default (auto): More aggressive extraction
-        instruction = (
-            "Extract durable memories from this conversation:\n"
-            "- User explicit statements about themselves (names, location, occupation, preferences, goals)\n"
-            "- Assistant explicit self-statements (chosen names, capabilities, preferences, goals)\n"
-            "- Explicit permissions or agreements from user\n"
-            "INCLUDE: Direct facts like:\n"
-            "  - 'Hi, my name is X' → User name is X\n"
-            "  - 'I live in...' → User lives in...\n"
-            "  - 'I want...', 'I love...', 'I am...'\n"
-            "  - 'I give you permission...', 'I name you...'\n"
-            "  - 'I give you the name X', 'I give you the name of X', 'Your name is X' → Assistant name is X\n"
-            "  - 'I rename you to X', 'I call you X' → Assistant name is X\n"
-            "EXCLUDE: pure questions, pure greetings ('hi', 'hello' alone), filler ('how are you'). DO NOT exclude facts just because they were repeated.\n"
-            "CRITICAL: DO NOT attribute Assistant's suggestions, lists, or hypothetical topics to the User. Only record User interests if the USER explicitly stated them.\n"
-            "Return ONLY the JSON array. If no valid memories, return []."
-        )
-
-    convo = [
-        {"role": "user",
-         "content": f"User said: {user_text or ''}\n\nAssistant replied: {assistant_text or ''}\n\n{instruction}"},
-    ]
-
-    # logging.debug(f"💡 [Debug] Sending to LLM for extraction:")
-    # logging.debug(f"   User text: '{user_text}'")
-    # logging.debug(f"   Assistant text: '{assistant_text}'")
-
-    raw = run_local_lm(convo, system_prompt=memory_extractor_prompt, temperature=0.1, base_url=base_url,
-                       chat_model=chat_model, stop_check_fn=stop_check_fn).strip()
-    # logging.debug(f"💡 [Debug] Raw LM output for memory extraction:\n {raw}")
-    try:
-        data = parse_json_array_loose(raw)
-    except Exception:
-        data = []
-
-    ALLOWED_TYPES = {"FACT", "PREFERENCE", "RULE", "PERMISSION", "IDENTITY", "BELIEF", "GOAL", "REFUTED_BELIEF"}
-    ALLOWED_SUBJECTS = {"User", "Assistant"}
-
-    memories, embeddings, cleaned = [], [], []
-
-    for item in data[:5]:
-        if not isinstance(item, dict):
-            continue
-        mtype = item.get("type")
-        subject = item.get("subject")
-        text = item.get("text")
-        if mtype not in ALLOWED_TYPES or subject not in ALLOWED_SUBJECTS or not isinstance(text, str):
-            continue
-        text = text.strip()
-        if not text:
-            continue
-        # Add confidence field - default to high confidence since LLM already filtered
-        cleaned.append({
-            "type": mtype,
-            "subject": subject,
-            "text": text[:1000],
-            "confidence": 0.9  # High confidence for LLM-extracted memories
-        })
-
-    # Deterministic deduplication
-    def normalize_key(s: str) -> str:
-        s = s.lower()
-        s = re.sub(r"[^a-z0-9\s]", "", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        return s
-
-    merged = {}
-    for m in cleaned:
-        key = (m["type"], m["subject"], normalize_key(m["text"]))
-        if key not in merged:
-            merged[key] = m
-        else:
-            if len(m["text"]) < len(merged[key]["text"]):
-                merged[key] = m
-
-    for m in merged.values():
-        memories.append(m)
-        embeddings.append(compute_embedding(m["text"], base_url=base_url, embedding_model=embedding_model))
-
-    return memories, embeddings
-
-
-# ==============================
-# Backward-compatible wrapper
-# ==============================
-
 def _is_low_quality_candidate(text: str, mem_type: str = None) -> bool:
     """
     Filter out low-quality memory candidates:
@@ -740,7 +626,7 @@ def _is_low_quality_candidate(text: str, mem_type: str = None) -> bool:
     return False
 
 
-def extract_memory_candidates(
+def extract_memories_llm(
         user_text: str,
         assistant_text: str,
         force: bool = False,
@@ -751,21 +637,100 @@ def extract_memory_candidates(
         memory_extractor_prompt: str = MEMORY_EXTRACTOR_PROMPT,
         custom_instruction: str = None,
         stop_check_fn: Optional[Callable[[], bool]] = None
-):
+) -> Tuple[List[Dict], List[np.ndarray]]:
     """
-    OLD function signature compatibility:
-    Returns only list of memory dicts for old bot.py.
-    NOW with filtering to remove low-quality candidates.
+    Extract memories with subject/type.
+    Returns (memories_list, embeddings_list)
     """
-    memories, _ = extract_memories_llm(user_text, assistant_text, force=force, auto=auto, base_url=base_url,
-                                       chat_model=chat_model, embedding_model=embedding_model,
-                                       memory_extractor_prompt=memory_extractor_prompt,
-                                       custom_instruction=custom_instruction, stop_check_fn=stop_check_fn)
+    if custom_instruction:
+        instruction = custom_instruction
+    elif force:
+        instruction = (
+            "Extract ALL valid durable memories NOW, including:\n"
+            "- User facts: names, locations, occupations, preferences, goals\n"
+            "- Assistant self-statements: chosen names, preferences, goals\n"
+            "- Explicit permissions granted by user\n"
+            "Do NOT include: greetings, questions, filler, echoes.\n"
+            "Output ONLY valid JSON array."
+        )
+    else:
+        # Default (auto): More aggressive extraction
+        instruction = (
+            "Extract durable memories from this conversation:\n"
+            "- User explicit statements about themselves (names, location, occupation, preferences, goals)\n"
+            "- Assistant explicit self-statements (chosen names, capabilities, preferences, goals)\n"
+            "- Explicit permissions or agreements from user\n"
+            "INCLUDE: Direct facts like:\n"
+            "  - 'Hi, my name is X' → User name is X\n"
+            "  - 'I live in...' → User lives in...\n"
+            "  - 'I want...', 'I love...', 'I am...'\n"
+            "  - 'I give you permission...', 'I name you...'\n"
+            "  - 'I give you the name X', 'I give you the name of X', 'Your name is X' → Assistant name is X\n"
+            "  - 'I rename you to X', 'I call you X' → Assistant name is X\n"
+            "EXCLUDE: pure questions, pure greetings ('hi', 'hello' alone), filler ('how are you'). DO NOT exclude facts just because they were repeated.\n"
+            "CRITICAL: DO NOT attribute Assistant's suggestions, lists, or hypothetical topics to the User. Only record User interests if the USER explicitly stated them.\n"
+            "Return ONLY the JSON array. If no valid memories, return []."
+        )
 
-    # Filter out low-quality candidates
-    filtered = []
-    for m in memories:
-        if not _is_low_quality_candidate(m["text"], mem_type=m.get("type")):
-            filtered.append(m)
+    convo = [
+        {"role": "user",
+         "content": f"User said: {user_text or ''}\n\nAssistant replied: {assistant_text or ''}\n\n{instruction}"},
+    ]
 
-    return filtered
+    # logging.debug(f"💡 [Debug] Sending to LLM for extraction:")
+    # logging.debug(f"   User text: '{user_text}'")
+    # logging.debug(f"   Assistant text: '{assistant_text}'")
+
+    raw = run_local_lm(convo, system_prompt=memory_extractor_prompt, temperature=0.1, base_url=base_url,
+                       chat_model=chat_model, stop_check_fn=stop_check_fn).strip()
+    # logging.debug(f"💡 [Debug] Raw LM output for memory extraction:\n {raw}")
+    try:
+        data = parse_json_array_loose(raw)
+    except Exception:
+        data = []
+
+    ALLOWED_TYPES = {"FACT", "PREFERENCE", "RULE", "PERMISSION", "IDENTITY", "BELIEF", "GOAL", "REFUTED_BELIEF"}
+    ALLOWED_SUBJECTS = {"User", "Assistant"}
+
+    memories, embeddings, cleaned = [], [], []
+
+    for item in data[:5]:
+        if not isinstance(item, dict):
+            continue
+        mtype = item.get("type")
+        subject = item.get("subject")
+        text = item.get("text")
+        if mtype not in ALLOWED_TYPES or subject not in ALLOWED_SUBJECTS or not isinstance(text, str):
+            continue
+        text = text.strip()
+        if not text or _is_low_quality_candidate(text, mem_type=mtype):
+            continue
+        # Add confidence field - default to high confidence since LLM already filtered
+        cleaned.append({
+            "type": mtype,
+            "subject": subject,
+            "text": text[:1000],
+            "confidence": 0.9  # High confidence for LLM-extracted memories
+        })
+
+    # Deterministic deduplication
+    def normalize_key(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r"[^a-z0-9\s]", "", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    merged = {}
+    for m in cleaned:
+        key = (m["type"], m["subject"], normalize_key(m["text"]))
+        if key not in merged:
+            merged[key] = m
+        else:
+            if len(m["text"]) < len(merged[key]["text"]):
+                merged[key] = m
+
+    for m in merged.values():
+        memories.append(m)
+        embeddings.append(compute_embedding(m["text"], base_url=base_url, embedding_model=embedding_model))
+
+    return memories, embeddings
