@@ -899,6 +899,9 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def handle_telegram_document(self, msg: Dict):
         """Handle document upload from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         try:
             file_info = msg["document"]
             file_id = file_info["file_id"]
@@ -982,8 +985,28 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
         threading.Thread(target=reset_flag, daemon=True).start()
 
+    def _is_authorized(self, chat_id) -> bool:
+        """Check if the incoming chat_id is authorized."""
+        try:
+            authorized_id = str(self.settings.get("chat_id", "")).strip()
+            if not authorized_id:
+                return False
+
+            # Compare as strings to handle potential type mismatches
+            if str(chat_id) != authorized_id:
+                logging.warning(f"⚠️ Unauthorized Telegram access attempt from chat_id: {chat_id}")
+                return False
+
+            return True
+        except Exception as e:
+            logging.error(f"Authorization check error: {e}")
+            return False
+
     def handle_telegram_text(self, msg: Dict):
         """Handle text message from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         # Reset status suppression on interaction
         self.telegram_status_sent = False
 
@@ -1006,6 +1029,9 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def handle_telegram_photo(self, msg: Dict):
         """Handle photo from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         try:
             file_id = msg["photo"]["file_id"]
             caption = msg.get("caption", "") or "Analyze this image."
@@ -1027,6 +1053,9 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def handle_telegram_voice(self, msg: Dict):
         """Handle voice message from Telegram"""
+        if not self._is_authorized(msg.get("chat_id")):
+            return
+
         try:
             file_id = msg["voice"]["file_id"]
             chat_id = msg["chat_id"]
