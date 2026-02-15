@@ -1577,3 +1577,67 @@ class Daat:
                 self.memory_store.self_model.update_narrative({"life_story": new_story})
                 
             self.log("📖 Da'at: Life Story updated.")
+
+    def prune_redundant_memories(self):
+        """
+        Identify and remove semantically identical memories to reduce clutter.
+        """
+        import difflib
+        self.log("🧹 Da'at: Pruning redundant memories...")
+
+        # Fetch recent memories (FACTs and BELIEFs)
+        recent = self.memory_store.list_recent(limit=100)
+
+        # Filter for FACT/BELIEF
+        candidates = [m for m in recent if m[1] in ('FACT', 'BELIEF')]
+
+        deleted_count = 0
+        processed_ids = set()
+
+        for i in range(len(candidates)):
+            m1 = candidates[i]
+            if m1[0] in processed_ids: continue
+
+            for j in range(i + 1, len(candidates)):
+                m2 = candidates[j]
+                if m2[0] in processed_ids: continue
+
+                # Check text similarity
+                # Using 3 for text
+                ratio = difflib.SequenceMatcher(None, m1[3], m2[3]).ratio()
+
+                if ratio > 0.95:
+                    # Redundant! Keep the one with more information (longer text) or verified
+                    m1_score = len(m1[3]) + (1000 if m1[5] else 0)
+                    m2_score = len(m2[3]) + (1000 if m2[5] else 0)
+
+                    id_to_delete = m2[0] if m1_score >= m2_score else m1[0]
+
+                    self.memory_store.soft_delete_entry(id_to_delete)
+                    processed_ids.add(id_to_delete)
+                    deleted_count += 1
+                    self.log(f"🧹 Pruned redundant memory {id_to_delete} (Sim: {ratio:.2f})")
+
+        return f"Pruned {deleted_count} memories."
+
+    def schedule_learning_session(self, topic: str):
+        """
+        Create a high-priority learning goal.
+        """
+        goal_text = f"Deep Dive: Research {topic}"
+        identity = self.memory_store.compute_identity(goal_text, "GOAL")
+
+        # Check if exists
+        with self.memory_store._connect() as con:
+            exists = con.execute("SELECT 1 FROM memories WHERE identity = ? AND completed = 0", (identity,)).fetchone()
+
+        if not exists:
+            self.memory_store.add_entry(
+                identity=identity,
+                text=goal_text,
+                mem_type="GOAL",
+                subject="Daat",
+                confidence=1.0,
+                source="daat_learning_schedule"
+            )
+            self.log(f"🎓 Scheduled Learning Session: {topic}")

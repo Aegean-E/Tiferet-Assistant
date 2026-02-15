@@ -1,6 +1,8 @@
 import time
 import os
+import difflib
 from typing import Dict, Any, List, Optional
+from .lm import run_local_lm
 
 class GlobalWorkspace:
     """
@@ -36,8 +38,19 @@ class GlobalWorkspace:
         # Normalize content
         content_key = content.strip().lower()
 
-        # Check if exists
-        existing = next((i for i in self.working_memory if i["content"].strip().lower() == content_key), None)
+        # Check if exists (Semantic/Fuzzy Match)
+        existing = None
+        for item in self.working_memory:
+            # Check exact match first
+            if item["content"].strip().lower() == content_key:
+                existing = item
+                break
+
+            # Check fuzzy match
+            ratio = difflib.SequenceMatcher(None, item["content"], content).ratio()
+            if ratio > 0.75:
+                existing = item
+                break
 
         if existing:
             # Boost salience (Reinforcement)
@@ -196,3 +209,45 @@ class GlobalWorkspace:
                 source="GlobalWorkspace",
                 priority=10
             )
+
+    def get_dominant_thought(self) -> Optional[Dict[str, Any]]:
+        """Return the item with the highest salience."""
+        if not self.working_memory:
+            return None
+        # Sort by salience desc
+        sorted_mem = sorted(self.working_memory, key=lambda x: x["salience"], reverse=True)
+        return sorted_mem[0]
+
+    def evolve_thought(self, chat_model: str = None, base_url: str = None) -> str:
+        """
+        Evolve the dominant thought using LLM (Chain of Thought).
+        """
+        dominant = self.get_dominant_thought()
+        if not dominant:
+            return "Mind is empty."
+
+        content = dominant["content"]
+
+        prompt = (
+            f"CURRENT THOUGHT: {content}\n\n"
+            "You are the Inner Voice of the AI.\n"
+            "Expand on this thought. Connect it to broader implications, or refine it into a specific question.\n"
+            "Do not repeat the thought. Move it forward.\n"
+            "Output ONLY the new thought (1-2 sentences)."
+        )
+
+        response = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Stream of Consciousness.",
+            temperature=0.7,
+            max_tokens=100,
+            chat_model=chat_model,
+            base_url=base_url
+        )
+
+        if response and not response.startswith("⚠️"):
+            # Integrate back with high salience to maintain focus
+            self.integrate(response, "GlobalWorkspace", 1.0)
+            return response
+
+        return content
