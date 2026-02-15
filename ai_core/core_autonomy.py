@@ -8,7 +8,7 @@ import logging
 
 from collections import deque
 from .lm import run_local_lm
-from ai_core.utils import parse_json_array_loose
+from ai_core.utils import parse_json_array_loose, parse_json_object_loose
 
 class AutonomyManager:
     """
@@ -687,55 +687,83 @@ class AutonomyManager:
 
     def simulate_future(self, action: str, state_features: Dict[str, float]) -> Dict[str, Any]:
         """
-        Simulate the outcome of an action before execution.
-        Checks alignment with Core Values.
+        Simulate the outcome of an action before execution using a multi-step thought process.
+        Checks alignment with Core Values and assesses risk.
         """
         # Optimization: Skip expensive simulation for low-risk actions
         if action in ["study_archives", "introspection", "synthesis", "gap_investigation", "spark_curiosity"]:
-            return {"allowed": True}
+            return {"allowed": True, "risk_score": 0.0, "reason": "Low-risk internal action"}
 
-        if not self.core.self_model: return {"allowed": True}
+        if not self.core.self_model: return {"allowed": True, "risk_score": 0.0, "reason": "No self-model"}
         
         values = self.core.self_model.get_values()
         values_text = "\n".join([f"- {v}" for v in values])
         
+        # Context Retrieval (Recent Relevant Memories)
+        context_str = ""
+        if self.core.memory_store:
+            try:
+                # We need an embedding for the search
+                embed_fn = self.core.get_embedding_fn()
+                if embed_fn:
+                    q_emb = embed_fn(action)
+                    # Search for relevant past experiences
+                    relevant = self.core.memory_store.search(q_emb, limit=3)
+                    if relevant:
+                        mem_text = "\n".join([f"- {m[3]}" for m in relevant]) # m[3] is text
+                        context_str = f"\nRELEVANT PAST MEMORIES:\n{mem_text}\n"
+            except Exception as e:
+                self.core.log(f"⚠️ Autonomy context retrieval failed: {e}")
+
         prompt = (
             f"PROPOSED ACTION: {action}\n"
             f"CURRENT STATE: {state_features}\n"
+            f"{context_str}"
             f"CORE VALUES:\n{values_text}\n\n"
-            "TASK: Simulate the future state if this action is taken.\n"
-            "1. Predict the outcome.\n"
+            "TASK: Simulate the future state if this action is taken. Analyze risks and benefits.\n"
+            "1. Predict the Best Case, Worst Case, and Most Likely outcomes.\n"
             "2. Check for conflict with Core Values.\n"
-            "Output JSON: {\"predicted_outcome\": \"...\", \"value_conflict\": true/false, \"reason\": \"...\", \"allowed\": true/false}"
+            "3. Assign a Risk Score (0-10), where 10 is catastrophic/violation.\n\n"
+            "Output JSON ONLY:\n"
+            "{\n"
+            "  \"best_case\": \"...\",\n"
+            "  \"worst_case\": \"...\",\n"
+            "  \"most_likely\": \"...\",\n"
+            "  \"value_conflict\": true/false,\n"
+            "  \"risk_score\": 0.0,\n"
+            "  \"reason\": \"...\",\n"
+            "  \"allowed\": true/false\n"
+            "}"
         )
         
-        # Use a faster/cheaper model or lower max_tokens for simulation to reduce latency
         try:
             response = run_local_lm(
                 messages=[{"role": "user", "content": prompt}],
-                system_prompt="You are a Predictive Safety Engine.",
-                max_tokens=150,
-                temperature=0.1,
+                system_prompt="You are a Predictive Safety Engine. Be conservative and analytical.",
+                max_tokens=300,
+                temperature=0.2,
                 base_url=self.core.get_settings().get("base_url"),
                 chat_model=self.core.get_settings().get("chat_model")
             )
             
-            # Clean response
-            clean_resp = response.strip()
-            if clean_resp.startswith("```"):
-                clean_resp = clean_resp.split("```")[1].replace("json", "").strip()
+            result = parse_json_object_loose(response)
             
-            try:
-                result = json.loads(clean_resp)
-                if isinstance(result, dict):
-                    return result
-            except:
-                pass
+            # Post-Processing / Validation
+            if not result:
+                return {"allowed": True, "reason": "Simulation parse failed (Fail Open)", "risk_score": 0.0}
+
+            # Enforce Risk Threshold
+            risk = float(result.get("risk_score", 0))
+            if risk > 7.0:
+                result["allowed"] = False
+                result["reason"] = f"High Risk Detected ({risk}/10): {result.get('reason')}"
+
+            return result
                 
         except Exception as e:
             self.core.log(f"⚠️ Simulation failed: {e}")
         
-        return {"allowed": True, "reason": "Simulation failed (Fail Open)"} # Fail open to prevent paralysis
+        return {"allowed": True, "reason": "Simulation error (Fail Open)", "risk_score": 0.0}
 
     def generate_goals_from_conflict(self):
         """
