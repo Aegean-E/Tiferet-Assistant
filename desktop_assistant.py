@@ -12,31 +12,20 @@ import threading
 import time
 import json
 import os
-import re
-from datetime import datetime
-from collections import deque
-import subprocess
 import shutil
+from collections import deque
 from typing import Dict, List, Optional
-
-# Audio recording
-try:
-    import pyaudio
-    import wave
-    AUDIO_AVAILABLE = True
-except ImportError:
-    AUDIO_AVAILABLE = False
 
 # Import AI Core
 from ai_core.ai_core import AICore
 from ai_core.ai_controller import AIController
-from ai_core.lm import transcribe_audio
 from docs.default_prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_MEMORY_EXTRACTOR_PROMPT, DAYDREAM_EXTRACTOR_PROMPT
 
-from bridges.telegram_api import TelegramBridge
-
 from ui import DesktopAssistantUI
-from docs.commands import handle_command as process_command_logic, NON_LOCKING_COMMANDS
+from docs.commands import handle_command as process_command_logic
+
+from components.voice_manager import VoiceManager
+from components.telegram_manager import TelegramManager
 
 CURRENT_SETTINGS_VERSION = 1.1
 
@@ -68,9 +57,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
         # State
         self.settings = self.load_settings()
-        self.telegram_bridge = None
         self.observer = None
-        self.connected = False
         self.is_showing_placeholder = False  # Track placeholder state
         self.decider = None
         self.hod = None
@@ -78,15 +65,15 @@ class DesktopAssistantApp(DesktopAssistantUI):
         self.start_time = time.time()
         self.controller = None
         
-        self.telegram_status_sent = False  # Track if status has been sent to avoid spam
+        # Managers
+        self.voice_manager = VoiceManager(self)
+        self.telegram_manager = TelegramManager(self)
         
         # Initialize chat mode based on settings
         initial_mode = self.settings.get("ai_mode", "Daydream")
         self.chat_mode_var = tk.StringVar(value=initial_mode)
         self.daydream_cycle_count = 0
         self.pending_confirmation_command = None
-        self.is_recording = False
-        self.audio_frames = []
 
         # Initialize ttkbootstrap style with loaded theme
         theme_map = {
@@ -153,6 +140,11 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
         # Start Settings Watcher
         self.start_settings_watcher()
+
+    @property
+    def telegram_bridge(self):
+        """Expose telegram bridge from manager for backward compatibility."""
+        return self.telegram_manager.bridge
         
     def create_new_session(self, name="New Chat"):
         """Create a new chat session."""
@@ -202,8 +194,8 @@ class DesktopAssistantApp(DesktopAssistantUI):
             self.disconnect() # Stop telegram polling
             if hasattr(self, 'ai_core'):
                 self.ai_core.shutdown()
-            if hasattr(self, 'telegram_bridge') and self.telegram_bridge:
-                self.telegram_bridge.close()
+            if hasattr(self, 'telegram_manager'):
+                self.telegram_manager.close()
             if hasattr(self, 'ai_core') and self.ai_core.internet_bridge:
                 self.ai_core.internet_bridge.close()
             if hasattr(self, 'executor'):
@@ -493,7 +485,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
             # Forward to Telegram
             if self.is_connected() and self.settings.get("telegram_bridge_enabled", False):
-                 self.telegram_bridge.send_message(msg)
+                 self.telegram_manager.send_message(msg)
 
             # Update Current Session Memory
             if self.current_session_id:
@@ -639,108 +631,23 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def toggle_connection(self):
         """Toggle connection to Telegram"""
-        # Toggle the setting
-        with self.settings_lock:
-            new_state = not self.telegram_bridge_enabled.get()
-            self.telegram_bridge_enabled.set(new_state)
-            # Save the new state
-            self.settings["telegram_bridge_enabled"] = new_state
-            self.save_settings()
-
-        # Update connection based on new state
-        if new_state:
-            # Only connect if both credentials are provided
-            bot_token = self.bot_token_var.get().strip()
-            chat_id_str = self.chat_id_var.get().strip()
-            if bot_token and chat_id_str:
-                try:
-                    int(chat_id_str)  # Validate chat ID is numeric
-                    self.connect()
-                except ValueError:
-                    messagebox.showerror("Connection Error", "Chat ID must be a valid number")
-                    self.telegram_bridge_enabled.set(False)
-                    with self.settings_lock:
-                        self.settings["telegram_bridge_enabled"] = False
-                        self.save_settings()
-            else:
-                messagebox.showerror("Connection Error", "Please enter both Bot Token and Chat ID in Settings")
-                self.telegram_bridge_enabled.set(False)
-                with self.settings_lock:
-                    self.settings["telegram_bridge_enabled"] = False
-                    self.save_settings()
-        else:
-            self.disconnect()
+        self.telegram_manager.toggle_connection()
 
     def connect(self):
         """Connect to Telegram (Non-blocking)"""
-        if self.is_connected():
-            return  # Already connected
-
-        bot_token = self.bot_token_var.get().strip()
-        chat_id_str = self.chat_id_var.get().strip()
-
-        if not bot_token or not chat_id_str:
-            return
-
-        def connection_worker():
-            try:
-                chat_id = int(chat_id_str)
-                bridge = TelegramBridge(bot_token, chat_id, log_fn=self.log_to_main)
-
-                # Test connection (Blocks thread, but not UI)
-                if bridge.send_message("✅ Connected to Desktop Assistant"):
-                    self.telegram_bridge = bridge
-                    self.connected = True
-                    
-                    # Update UI on main thread
-                    self.root.after(0, lambda: self.connect_button.config(text="Connected", bootstyle="success"))
-                    self.root.after(0, lambda: self.status_var.set("Connected to Telegram"))
-
-                    # Start message polling
-                    threading.Thread(
-                        target=self.telegram_bridge.listen,
-                        kwargs={
-                            "on_text": self.handle_telegram_text,
-                            "on_document": lambda m: threading.Thread(target=self.handle_telegram_document, args=(m,), daemon=True).start(),
-                            "on_photo": self.handle_telegram_photo,
-                            "on_voice": lambda m: threading.Thread(target=self.handle_telegram_voice, args=(m,), daemon=True).start(),
-                            "running_check": lambda: self.is_connected() and self.settings.get("telegram_bridge_enabled", False),
-                            "start_timestamp": self.start_time
-                        },
-                        daemon=True
-                    ).start()
-                else:
-                    raise Exception("Failed to send test message")
-
-            except Exception as e:
-                logging.error(f"Telegram connection error: {e}")
-                if self.settings.get("telegram_bridge_enabled", False):
-                    self.root.after(0, lambda: messagebox.showerror("Connection Error", f"Failed to connect: {e}"))
-                self.root.after(0, self.disconnect)
-
-        threading.Thread(target=connection_worker, daemon=True).start()
+        self.telegram_manager.connect()
 
     def disconnect(self):
         """Disconnect from Telegram"""
-        self.connected = False
-        self.telegram_bridge = None
-        self.connect_button.config(text="Connect", bootstyle="secondary")
-        self.status_var.set("Disconnected from Telegram")
+        self.telegram_manager.disconnect()
 
     def send_telegram_status(self, message: str):
         """Send a status update to Telegram if connected"""
-        if self.is_connected() and self.settings.get("telegram_bridge_enabled", False):
-             # Suppress repetitive status messages until user interacts
-             if self.telegram_status_sent:
-                 return
-
-             if self.telegram_bridge.send_message(message):
-                 if "finished" in message.lower():
-                     self.telegram_status_sent = True
+        self.telegram_manager.send_telegram_status(message)
 
     def is_connected(self):
         """Check if connected to Telegram"""
-        return self.connected and self.telegram_bridge is not None
+        return self.telegram_manager.is_connected()
 
     def handle_command(self, text: str, chat_id: int) -> Optional[str]:
         """Process slash commands and return response if matched"""
@@ -802,83 +709,13 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def toggle_recording(self):
         """Toggle voice recording state."""
-        if not AUDIO_AVAILABLE:
-            messagebox.showerror("Error", "PyAudio not installed. Cannot record.")
-            return
-
-        if not self.is_recording:
-            self.start_recording()
-        else:
-            self.stop_recording()
+        self.voice_manager.toggle_recording()
 
     def start_recording(self):
-        self.is_recording = True
-        self.voice_btn.config(text="⏹️", bootstyle="danger")
-        self.audio_frames = []
-        
-        # Start blinking effect
-        self._blink_recording_indicator()
-        
-        def record_loop():
-            try:
-                chunk = 1024
-                format = pyaudio.paInt16
-                channels = 1
-                rate = 44100
-                
-                p = pyaudio.PyAudio()
-                stream = p.open(format=format, channels=channels, rate=rate, input=True, frames_per_buffer=chunk)
-                
-                while self.is_recording:
-                    data = stream.read(chunk)
-                    self.audio_frames.append(data)
-                
-                stream.stop_stream()
-                stream.close()
-                p.terminate()
-                
-                # Save to file
-                temp_wav = "./data/temp_voice_input.wav"
-                wf = wave.open(temp_wav, 'wb')
-                wf.setnchannels(channels)
-                wf.setsampwidth(p.get_sample_size(format))
-                wf.setframerate(rate)
-                wf.writeframes(b''.join(self.audio_frames))
-                wf.close()
-                
-                # Transcribe
-                self.root.after(0, lambda: self.status_var.set("Transcribing voice..."))
-                text = transcribe_audio(temp_wav)
-                
-                # Insert into entry
-                self.root.after(0, lambda: self.message_entry.insert(tk.END, text + " "))
-                self.root.after(0, lambda: self.status_var.set("Ready"))
-                
-                # Cleanup
-                try: os.remove(temp_wav)
-                except: pass
-            except Exception as e:
-                logging.error(f"Voice recording error: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Recording Error", f"Failed to record audio: {e}"))
-                self.root.after(0, self.stop_recording)
-
-        threading.Thread(target=record_loop, daemon=True).start()
-
-    def _blink_recording_indicator(self):
-        """Blink the recording button to indicate activity."""
-        if not self.is_recording:
-            return
-        
-        current_text = self.voice_btn.cget("text")
-        # Toggle between Stop icon and Red Circle
-        new_text = "🔴" if current_text == "⏹️" else "⏹️"
-        self.voice_btn.config(text=new_text)
-        
-        self.root.after(500, self._blink_recording_indicator)
+        self.voice_manager.start_recording()
 
     def stop_recording(self):
-        self.is_recording = False
-        self.voice_btn.config(text="🎤", bootstyle="default", style="Big.Link.TButton")
+        self.voice_manager.stop_recording()
 
     def handle_feedback(self, message_text, rating):
         """
@@ -926,154 +763,6 @@ class DesktopAssistantApp(DesktopAssistantUI):
             'chunks_count': len(chunks),
             'page_count': page_count
         }
-
-    def handle_telegram_document(self, msg: Dict):
-        """Handle document upload from Telegram"""
-        try:
-            file_info = msg["document"]
-            file_id = file_info["file_id"]
-            file_name = file_info.get("file_name", "unknown_file")
-            chat_id = msg["chat_id"]
-
-            # Check supported types
-            if not file_name.lower().endswith(('.pdf', '.docx')):
-                self.telegram_bridge.send_message(f"⚠️ Unsupported file type: {file_name}. Please send PDF or DOCX.")
-                return
-
-            self.telegram_bridge.send_message(f"📄 Received {file_name}, processing...")
-
-            # Get file path from Telegram
-            file_data = self.telegram_bridge.get_file_info(file_id)
-            telegram_file_path = file_data["file_path"]
-
-            # Download
-            local_dir = "./data/uploaded_docs"
-            os.makedirs(local_dir, exist_ok=True)
-            local_file_path = os.path.join(local_dir, file_name)
-            
-            self.telegram_bridge.download_file(telegram_file_path, local_file_path)
-
-            # Ingest using common logic
-            result = self._ingest_document(local_file_path, upload_source="telegram", original_filename=file_name)
-
-            if result['status'] == 'duplicate':
-                self.telegram_bridge.send_message(f"⚠️ Document '{file_name}' already exists in database. Skipping...")
-            elif result['status'] == 'success':
-                self.telegram_bridge.send_message(f"✅ Successfully added '{file_name}' to database ({result['chunks_count']} chunks).")
-                self.root.after(0, self.refresh_documents)
-
-        except Exception as e:
-            logging.error(f"Error handling Telegram document: {e}")
-            if self.telegram_bridge:
-                self.telegram_bridge.send_message(f"❌ Error processing document: {str(e)}")
-        finally:
-            if 'local_file_path' in locals() and os.path.exists(local_file_path):
-                os.remove(local_file_path)
-
-    def handle_disrupt_command(self, chat_id):
-        """Handle /disrupt command from Telegram to stop processing immediately"""
-        logging.info("🛑 Disrupt command received from Telegram.")
-        if self.telegram_bridge:
-            self.telegram_bridge.send_message("🛑 Disrupting current process...")
-        
-        if self.controller:
-            self.controller.stop_processing_flag = True
-        
-        if self.ai_core and self.ai_core.decider:
-            self.ai_core.decider.report_forced_stop()
-            
-        def reset_flag():
-            time.sleep(1.5) 
-            if self.controller:
-                self.controller.stop_processing_flag = False
-            logging.info("▶️ Decider ready for next turn (Cooldown active).")
-            if self.telegram_bridge:
-                self.telegram_bridge.send_message("▶️ Process disrupted. Decider is in cooldown.")
-            
-        threading.Thread(target=reset_flag, daemon=True).start()
-
-    def handle_telegram_text(self, msg: Dict):
-        """Handle text message from Telegram"""
-        # Reset status suppression on interaction
-        self.telegram_status_sent = False
-
-        # Check for disrupt command OR implicit disrupt on any message
-        text_content = msg.get("text", "").strip().lower()
-        is_explicit_disrupt = text_content == "/disrupt"
-        
-        if is_explicit_disrupt:
-            self.handle_disrupt_command(msg["chat_id"])
-            return
-
-        # Show in UI
-        self.root.after(0, lambda m=msg: self.add_chat_message(m["from"], m["text"], "incoming"))
-        # Process logic
-        threading.Thread(
-            target=self.process_message_thread, 
-            args=(msg["text"], False, msg["chat_id"]), # Use actual chat_id from msg
-            daemon=True
-        ).start()
-
-    def handle_telegram_photo(self, msg: Dict):
-        """Handle photo from Telegram"""
-        try:
-            file_id = msg["photo"]["file_id"]
-            caption = msg.get("caption", "") or "Analyze this image."
-            
-            # Download to temp
-            temp_path = f"./data/temp_img_{file_id}.jpg"
-            file_data = self.telegram_bridge.get_file_info(file_id)
-            self.telegram_bridge.download_file(file_data["file_path"], temp_path)
-            
-            self.root.after(0, lambda m=msg, c=caption, p=temp_path: self.add_chat_message(m["from"], c, "incoming", image_path=p))
-            
-            threading.Thread(
-                target=self.process_message_thread,
-                args=(caption, False, msg["chat_id"], temp_path), # Use actual chat_id from msg
-                daemon=True
-            ).start()
-        except Exception as e:
-            logging.error(f"Error handling photo: {e}")
-
-    def handle_telegram_voice(self, msg: Dict):
-        """Handle voice message from Telegram"""
-        try:
-            file_id = msg["voice"]["file_id"]
-            chat_id = msg["chat_id"]
-            
-            self.root.after(0, lambda: self.status_var.set("🎙️ Receiving voice message..."))
-            
-            file_data = self.telegram_bridge.get_file_info(file_id)
-            telegram_file_path = file_data["file_path"]
-            
-            temp_dir = "./data/temp_uploads"
-            os.makedirs(temp_dir, exist_ok=True)
-            local_file_path = os.path.join(temp_dir, f"voice_{file_id}.ogg")
-            
-            self.telegram_bridge.download_file(telegram_file_path, local_file_path)
-            
-            self.root.after(0, lambda: self.status_var.set("📝 Transcribing voice..."))
-            text = transcribe_audio(local_file_path)
-            
-            if text and not text.startswith("[Error"):
-                self.root.after(0, lambda: self.add_chat_message(msg["from"], f"🎙️ {text}", "incoming"))
-                threading.Thread(
-                    target=self.process_message_thread,
-                    args=(text, False, chat_id),
-                    daemon=True
-                ).start()
-            else:
-                self.telegram_bridge.send_message(f"⚠️ Sorry, I couldn't transcribe that voice message: {text}")
-                
-            if os.path.exists(local_file_path):
-                os.remove(local_file_path)
-                
-        except Exception as e:
-            logging.error(f"Error handling Telegram voice: {e}")
-            if self.telegram_bridge:
-                self.telegram_bridge.send_message(f"❌ Error processing voice message: {str(e)}")
-        finally:
-            self.root.after(0, lambda: self.status_var.set("Ready"))
 
     def upload_documents(self):
         """Upload documents via GUI"""
