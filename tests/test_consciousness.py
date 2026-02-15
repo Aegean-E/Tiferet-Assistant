@@ -8,6 +8,16 @@ from unittest.mock import MagicMock
 # Add repo root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Mock dependencies
+sys.modules["numpy"] = MagicMock()
+sys.modules["requests"] = MagicMock()
+sys.modules["tiktoken"] = MagicMock()
+sys.modules["faiss"] = MagicMock()
+sys.modules["pyaudio"] = MagicMock()
+sys.modules["wave"] = MagicMock()
+sys.modules["scipy"] = MagicMock()
+sys.modules["scipy.spatial.distance"] = MagicMock()
+
 from ai_core.core_spotlight import GlobalWorkspace
 from ai_core.core_self_model import SelfModel
 from ai_core.ai_core import AICore

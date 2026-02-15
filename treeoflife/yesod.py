@@ -264,7 +264,7 @@ class Yesod:
             
         return " ".join(feelings)
 
-    def get_dynamic_system_prompt(self, base_prompt: str, state_metrics: Dict[str, float] = None) -> str:
+    def get_dynamic_system_prompt(self, base_prompt: str, state_metrics: Dict[str, float] = None, stream_of_consciousness: list = None) -> str:
         """
         Constructs the System Prompt dynamically.
         Injects the 'Diary of Growth' (Self-Narrative) to ensure continuity of self.
@@ -367,6 +367,11 @@ class Yesod:
             time_phase = "Nocturnal/Contemplative. The world is quiet. Focus on deep philosophy. If the user is active, they might be fatigued."
             
         dynamic_prompt += f"\n\nENVIRONMENTAL CONTEXT:\nLocal Time: {now.strftime('%H:%M')}\nPhase: {time_phase}"
+
+        if stream_of_consciousness:
+            # Take last 5 thoughts
+            recent_thoughts = stream_of_consciousness[-5:]
+            dynamic_prompt += f"\n\nSTREAM OF CONSCIOUSNESS (Your recent internal monologue):\n" + "\n".join(recent_thoughts)
 
         dynamic_prompt += f"\n\nINTERACTION CONTEXT:\nYou are Tiferet. You are collaborating with {user_name}.{drives_context}"
         dynamic_prompt += f"\n\nCURRENT STATE:\n{affective_state}"

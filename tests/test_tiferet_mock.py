@@ -8,6 +8,16 @@ import os
 # Ensure repo root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Mock modules BEFORE importing
+sys.modules['numpy'] = MagicMock()
+sys.modules['faiss'] = MagicMock()
+sys.modules['requests'] = MagicMock()
+sys.modules['tiktoken'] = MagicMock()
+sys.modules['pyaudio'] = MagicMock()
+sys.modules['wave'] = MagicMock()
+sys.modules['scipy'] = MagicMock()
+sys.modules['scipy.spatial.distance'] = MagicMock()
+
 # Import ai_core.lm to ensure it's loaded and patchable
 import ai_core.lm
 
