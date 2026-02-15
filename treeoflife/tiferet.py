@@ -2289,11 +2289,7 @@ class Decider:
         )
         return response.strip()
 
-    def handle_natural_language_command(self, text: str, status_callback: Callable[[str], None] = None) -> Optional[str]:
-        """Check for and execute natural language commands."""
-        text = text.lower().strip()
-        
-        # Slash Commands
+    def _handle_slash_commands(self, text: str) -> Optional[str]:
         if text.startswith("/clear_mem"):
             try:
                 parts = text.split()
@@ -2308,8 +2304,9 @@ class Decider:
                     return f"⚠️ Memory {mem_id} not found or could not be deleted."
             except ValueError:
                 return "⚠️ Invalid ID format."
+        return None
 
-        # Daydream Loop
+    def _handle_daydream_loop(self, text: str) -> Optional[str]:
         if "run daydream loop" in text or "start daydream loop" in text:
             count = 10
             match = re.search(r'(\d+)\s*times', text)
@@ -2321,13 +2318,12 @@ class Decider:
             if self.heartbeat:
                 self.heartbeat.force_task("daydream", count, "Natural Command Loop")
             return f"🔄 Daydream loop enabled for {count} cycles."
+        return None
 
-        # Daydream Batch (Specific Count)
-        # Matches: "run 5 daydream cycles", "do 3 daydreams", "run 1 daydream cycle"
+    def _handle_daydream_batch(self, text: str) -> Optional[str]:
         batch_match = re.search(r"(?:run|do|start|execute)\s+(\d+)\s+daydream(?:s|ing)?(?: cycles?| loops?)?", text)
         if batch_match:
             count = int(batch_match.group(1))
-            # Cap count reasonably
             count = max(1, min(count, 20))
             
             self.log(f"🤖 Decider enabling Daydream Batch for {count} cycles via natural command.")
@@ -2335,13 +2331,13 @@ class Decider:
             if self.heartbeat:
                 self.heartbeat.force_task("daydream", count, "Natural Command Batch")
             return f"☁️ Starting {count} daydream cycles."
+        return None
 
-        # Learn / Expand Knowledge
+    def _handle_learn_command(self, text: str) -> Optional[str]:
         learn_match = re.search(r"(?:expand (?:your )?knowledge(?: about)?|learn(?: about)?|research|study|read up on|educate yourself(?: on| about)?)\s+(.*)", text, re.IGNORECASE)
         if learn_match:
             raw_topic = learn_match.group(1).strip(" .?!")
             
-            # Use LLM to extract the core topic more robustly
             settings = self.get_settings()
             core_topic_prompt = (
                 f"Extract the core topic from this phrase: '{raw_topic}'. "
@@ -2369,7 +2365,9 @@ class Decider:
                 return f"📚 Initiating research protocol for: {core_topic}. I will read relevant documents and generate insights."
             else:
                 return f"⚠️ Failed to extract a clear topic from '{raw_topic}'. Please be more specific."
+        return None
 
+    def _handle_verify_commands(self, text: str) -> Optional[str]:
         # Verify All
         if "run verification all" in text or "verify all" in text:
             self.log("🤖 Decider starting Full Verification via natural command.")
@@ -2382,7 +2380,7 @@ class Decider:
             self._run_action("verify_batch")
             return "🕵️ Verification batch triggered."
 
-        # Verify Beliefs (Internal Consistency/Insight)
+        # Verify Beliefs
         if "verify" in text and "belief" in text:
              self.log("🤖 Decider starting Belief Verification (Grounding).")
              self._run_action("verify_batch")
@@ -2390,12 +2388,14 @@ class Decider:
                  self.heartbeat.force_task("verify", 3, "Belief Verification")
              return "🕵️ Initiating belief verification."
 
-        # Verify Sources (Facts/Memories against Documents)
+        # Verify Sources
         if "verify" in text and ("fact" in text or "memory" in text or "source" in text):
              self.log("🤖 Decider starting Verification Batch via natural command.")
              self._run_action("verify_batch")
              return "🕵️ Verification batch triggered."
+        return None
 
+    def _handle_simple_commands(self, text: str) -> Optional[str]:
         # Single Daydream
         if text in ["run daydream", "start daydream", "daydream", "do a daydream"]:
             self.log("🤖 Decider starting single Daydream cycle via natural command.")
@@ -2414,7 +2414,9 @@ class Decider:
         if "go to sleep" in text or "enter sleep mode" in text:
             self.start_sleep_cycle()
             return "💤 Entering Sleep Mode. Inputs will be ignored while I consolidate memory."
-            
+        return None
+
+    def _handle_cognitive_commands(self, text: str) -> Optional[str]:
         # Think
         if text.startswith("think about") or text.startswith("analyze") or text.startswith("ponder"):
             topic = text.replace("think about", "").replace("analyze", "").replace("ponder", "").strip()
@@ -2432,7 +2434,9 @@ class Decider:
             premise = text.replace("simulate", "").replace("what if", "").strip()
             if "simulate_counterfactual" in self.actions:
                 return f"🌌 Simulation Result: {self.actions['simulate_counterfactual'](premise)}"
+        return None
 
+    def _handle_tool_commands(self, text: str) -> Optional[str]:
         # Tools: Calculator
         if text.startswith("calculate") or text.startswith("solve") or text.startswith("math"):
             expr = re.sub(r'^(calculate|solve|math)\s+', '', text, flags=re.IGNORECASE)
@@ -2461,6 +2465,27 @@ class Decider:
         if "system info" in text or "specs" in text or "hardware" in text:
             result = self._execute_tool("SYSTEM_INFO", "")
             return f"💻 System Info: {result}"
+        return None
+
+    def handle_natural_language_command(self, text: str, status_callback: Callable[[str], None] = None) -> Optional[str]:
+        """Check for and execute natural language commands."""
+        text = text.lower().strip()
+
+        handlers = [
+            self._handle_slash_commands,
+            self._handle_daydream_loop,
+            self._handle_daydream_batch,
+            self._handle_learn_command,
+            self._handle_verify_commands,
+            self._handle_simple_commands,
+            self._handle_cognitive_commands,
+            self._handle_tool_commands,
+        ]
+
+        for handler in handlers:
+            result = handler(text)
+            if result:
+                return result
 
         # --- Fallback: LLM-based Intent Analysis ---
         # If regex failed but keywords are present, ask the AI what it thinks.
