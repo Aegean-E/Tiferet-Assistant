@@ -1341,9 +1341,82 @@ class MemoryStore:
 
     def search_refuted(self, query_embedding: np.ndarray, limit: int = 3) -> List[Tuple]:
         """Specific search for REFUTED_BELIEF memories."""
-        # Process in batches to avoid OOM on large refuted sets
+        # 1. Fast Path: Use FAISS if available
+        if FAISS_AVAILABLE and self.faiss_index:
+            try:
+                result = self._search_refuted_faiss(query_embedding, limit)
+                if result is not None:
+                    return result
+            except Exception as e:
+                logging.error(f"⚠️ FAISS refuted search failed: {e}. Falling back.")
+                # Fallback to linear scan
+
+        # 2. Optimized Fallback
+        return self._search_refuted_fallback(query_embedding, limit)
+
+    def _search_refuted_faiss(self, query_embedding: np.ndarray, limit: int = 3) -> Optional[List[Tuple]]:
+        """Use FAISS reconstruction for fast search within a subset."""
+        # Fetch IDs first (DB is source of truth for 'REFUTED_BELIEF')
+        with self._connect() as con:
+            rows = con.execute("""
+                SELECT id, subject, text, source
+                FROM memories
+                WHERE type='REFUTED_BELIEF' AND deleted=0
+            """).fetchall()
+
+        if not rows: return []
+
+        target_ids = [r[0] for r in rows]
+        vectors = []
+        valid_indices = []
+
+        # Retrieve vectors from FAISS index directly (No JSON parsing)
+        # Note: reconstruct might fail if ID not in index.
+        # We process one by one to handle potential missing IDs gracefully.
+        # In future: could use reconstruct_batch if IDs are guaranteed.
+        for i, mid in enumerate(target_ids):
+            try:
+                vec = self.faiss_index.reconstruct(mid)
+                vectors.append(vec)
+                valid_indices.append(i)
+            except:
+                pass
+
+        # If we found candidate rows but no vectors in FAISS, index is out of sync.
+        # Fallback to DB scan to ensure we find the data.
+        if not vectors:
+            return None
+
+        # Vectorized similarity check
+        E = np.array(vectors, dtype='float32')
+        q_norm = np.linalg.norm(query_embedding)
+        if q_norm == 0: return []
+
+        # Assuming FAISS vectors are normalized (L2), dot product is cosine similarity
+        # If not, we should normalize E.
+        # But _build_faiss_index does `faiss.normalize_L2`.
+        # So we trust they are normalized.
+
+        # Normalize query
+        query_normed = query_embedding / q_norm
+
+        sims = np.dot(E, query_normed)
+
+        results = []
+        for j, sim in enumerate(sims):
+            if sim > 0.1:
+                idx = valid_indices[j]
+                r = rows[idx]
+                results.append((r[0], r[1], r[2], r[3], float(sim)))
+
+        results.sort(key=lambda x: x[4], reverse=True)
+        return results[:limit]
+
+    def _search_refuted_fallback(self, query_embedding: np.ndarray, limit: int = 3) -> List[Tuple]:
+        """Optimized linear scan using vectorized Numpy operations."""
         results = []
         q_norm = np.linalg.norm(query_embedding)
+        if q_norm == 0: return []
         
         with self._connect() as con:
             cursor = con.execute("""
@@ -1352,19 +1425,49 @@ class MemoryStore:
                 WHERE type='REFUTED_BELIEF' AND deleted=0 AND embedding IS NOT NULL
             """)
             
+            BATCH_SIZE = 1000
+
             while True:
-                rows = cursor.fetchmany(1000)
+                rows = cursor.fetchmany(BATCH_SIZE)
                 if not rows: break
                 
+                embeddings = []
+                valid_rows = []
+
                 for r in rows:
+                    if not r[4]: continue
                     try:
-                        mem_emb = np.array(json.loads(r[4]))
-                        m_norm = np.linalg.norm(mem_emb)
-                        if m_norm > 0 and q_norm > 0:
-                            sim = np.dot(query_embedding, mem_emb) / (q_norm * m_norm)
-                            if sim > 0.1:
-                                results.append((r[0], r[1], r[2], r[3], float(sim)))
+                        emb = json.loads(r[4])
+                        # Check dimension
+                        if len(emb) != query_embedding.shape[0]:
+                            continue
+                        embeddings.append(emb)
+                        valid_rows.append(r)
                     except: continue
+
+                if not embeddings: continue
+
+                E = np.array(embeddings, dtype='float32')
+
+                if E.shape[1] != query_embedding.shape[0]:
+                    continue
+
+                # Vectorized cosine similarity
+                dots = np.dot(E, query_embedding)
+                norms = np.linalg.norm(E, axis=1)
+
+                # Avoid divide by zero
+                norms[norms == 0] = 1e-10
+
+                sims = dots / (norms * q_norm)
+
+                # Filter > 0.1
+                mask = sims > 0.1
+                indices = np.where(mask)[0]
+
+                for idx in indices:
+                    r = valid_rows[idx]
+                    results.append((r[0], r[1], r[2], r[3], float(sims[idx])))
         
         results.sort(key=lambda x: x[4], reverse=True)
         return results[:limit]
