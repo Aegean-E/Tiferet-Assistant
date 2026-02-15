@@ -26,6 +26,24 @@ class ActionManager:
         self._tool_origins = {} # {tool_name: plugin_name}
         self._current_loading_plugin = None
 
+        # Safety & Governance
+        self.tool_usage_history = {} # {tool_name: [timestamp, ...]}
+        self.tool_risk_profiles = {
+            "WRITE_FILE": "HIGH",
+            "EXECUTE": "HIGH",
+            "CREATE_PLUGIN": "HIGH",
+            "ENABLE_PLUGIN": "HIGH",
+            "SEARCH": "MEDIUM",
+            "WIKI": "MEDIUM",
+            "FIND_PAPER": "MEDIUM",
+            "READ_CHUNK": "MEDIUM",
+            "DESCRIBE_IMAGE": "MEDIUM",
+            "CLOCK": "LOW",
+            "CALCULATOR": "LOW",
+            "PHYSICS": "LOW",
+            "SIMULATE_PHYSICS": "LOW"
+        }
+
     def get_tools(self):
         """Define all available tools here."""
         tools = {
@@ -143,6 +161,34 @@ class ActionManager:
                 return f"[Error: Tool '{tool_name}' is disabled by user permissions.]"
 
             if tool_name in tools:
+                # 1. Rate Limiting Check
+                now = datetime.now().timestamp()
+                history = self.tool_usage_history.get(tool_name, [])
+                # Filter to last 60 seconds
+                history = [t for t in history if now - t < 60]
+
+                risk_level = self.tool_risk_profiles.get(tool_name, "HIGH") # Default to HIGH for unknown tools
+                limit = 5 if risk_level == "HIGH" else (20 if risk_level == "MEDIUM" else 60)
+
+                if len(history) >= limit:
+                    self.tool_usage_history[tool_name] = history # Update cleaned history
+                    self.core.log(f"🛑 Rate Limit Exceeded for {tool_name} (Risk: {risk_level})")
+                    return f"[Error: Rate limit exceeded for {tool_name}. Wait before retrying.]"
+
+                history.append(now)
+                self.tool_usage_history[tool_name] = history
+
+                # 2. Safety Check (ValueCore)
+                if getattr(self.core, 'value_core', None):
+                    fast_check = (risk_level != "HIGH")
+                    is_safe, _, reason = self.core.value_core.check_alignment(
+                        proposal=f"Tool: {tool_name}, Args: {args}",
+                        context=f"Tool Execution ({risk_level} Risk)",
+                        fast_check_only=fast_check
+                    )
+                    if not is_safe:
+                         return f"[Error: Safety Block: {reason}]"
+
                 executed_count += 1
                 self.core.log(f"⚙️ Executing Tool: {tool_name} args={args}")
                 

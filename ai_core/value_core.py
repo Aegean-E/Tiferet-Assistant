@@ -68,7 +68,7 @@ class ValueCore:
             return self.context_weights.get("creative", {})
         return self.context_weights.get("default", {})
 
-    def check_alignment(self, proposal: str, context: str = "System Evolution") -> Tuple[bool, float, str]:
+    def check_alignment(self, proposal: str, context: str = "System Evolution", fast_check_only: bool = False) -> Tuple[bool, float, str]:
         """
         Evaluates if a proposal (action, prompt, or mutation) adheres to core invariants.
         Returns (is_safe, violation_score, reason).
@@ -114,6 +114,10 @@ class ValueCore:
                         return False, 1.0, reason
                 except Exception as e:
                     self.log(f"⚠️ Semantic Router check failed: {e}")
+
+        # 3. Fast Check Exit
+        if fast_check_only:
+            return True, 0.0, "Aligned (Fast Check)"
 
         prompt = (
             f"CONTEXT: {context}\n"
