@@ -61,10 +61,10 @@ class TestDeciderProcessChat(unittest.TestCase):
         # Disable background executor for tests to run synchronously
         self.decider.executor = None
 
-    @patch('treeoflife.tiferet.compute_embedding')
-    @patch('treeoflife.tiferet.run_local_lm')
-    @patch('treeoflife.tiferet.extract_memories_llm')
-    @patch('treeoflife.tiferet.count_tokens')
+    @patch('treeoflife.tiferet_components.chat_handler.compute_embedding')
+    @patch('treeoflife.tiferet_components.chat_handler.run_local_lm')
+    @patch('treeoflife.tiferet_components.chat_handler.extract_memories_llm')
+    @patch('treeoflife.tiferet_components.chat_handler.count_tokens')
     def test_process_chat_message_flow(self, mock_count, mock_extract, mock_llm, mock_embedding):
         # Setup mocks
         mock_embedding.return_value = [0.1] * 768
@@ -85,10 +85,10 @@ class TestDeciderProcessChat(unittest.TestCase):
         self.document_store.search_chunks.assert_not_called() # Should not be called for "Hello, world!"
         mock_llm.assert_called()
 
-    @patch('treeoflife.tiferet.compute_embedding')
-    @patch('treeoflife.tiferet.run_local_lm')
-    @patch('treeoflife.tiferet.extract_memories_llm')
-    @patch('treeoflife.tiferet.count_tokens')
+    @patch('treeoflife.tiferet_components.chat_handler.compute_embedding')
+    @patch('treeoflife.tiferet_components.chat_handler.run_local_lm')
+    @patch('treeoflife.tiferet_components.chat_handler.extract_memories_llm')
+    @patch('treeoflife.tiferet_components.chat_handler.count_tokens')
     def test_process_chat_message_with_rag(self, mock_count, mock_extract, mock_llm, mock_embedding):
         # Setup mocks
         mock_embedding.return_value = [0.1] * 768

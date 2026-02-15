@@ -39,14 +39,14 @@ class TestEnforceContextBudget(unittest.TestCase):
     def test_fit_within_budget(self):
         """Test that blocks fitting within the budget are included fully."""
         blocks = ["A" * 50, "B" * 50]
-        result = self.decider._enforce_context_budget(blocks, 150)
+        result = self.decider.chat_handler._enforce_context_budget(blocks, 150)
         self.assertEqual(len(result), 100)
         self.assertEqual(result, "A" * 50 + "B" * 50)
 
     def test_exact_fit(self):
         """Test exact budget fit."""
         blocks = ["A" * 50, "B" * 50]
-        result = self.decider._enforce_context_budget(blocks, 100)
+        result = self.decider.chat_handler._enforce_context_budget(blocks, 100)
         self.assertEqual(len(result), 100)
         self.assertEqual(result, "A" * 50 + "B" * 50)
 
@@ -64,7 +64,7 @@ class TestEnforceContextBudget(unittest.TestCase):
         # 2. B (50) fits. Remaining: 10. Final: [B, C] (prepended)
         # 3. A (100) doesn't fit. Remaining space = 10. 10 <= 100. Skip.
 
-        result = self.decider._enforce_context_budget(blocks, max_chars)
+        result = self.decider.chat_handler._enforce_context_budget(blocks, max_chars)
         self.assertEqual(result, "B" * 50 + "C" * 40)
 
     def test_truncation_logic(self):
@@ -81,7 +81,7 @@ class TestEnforceContextBudget(unittest.TestCase):
         #    150 > 100, so truncate A to last 150 chars.
         #    Prepend marker.
 
-        result = self.decider._enforce_context_budget(blocks, max_chars)
+        result = self.decider.chat_handler._enforce_context_budget(blocks, max_chars)
 
         marker = "... [Context Truncated] ...\n"
         truncated_part = ("A" * 200)[-150:]
@@ -94,13 +94,13 @@ class TestEnforceContextBudget(unittest.TestCase):
     def test_skip_empty_blocks(self):
         """Test that empty blocks are ignored."""
         blocks = ["", "A" * 50, ""]
-        result = self.decider._enforce_context_budget(blocks, 100)
+        result = self.decider.chat_handler._enforce_context_budget(blocks, 100)
         self.assertEqual(result, "A" * 50)
 
     def test_order_preservation(self):
         """Test that original order of blocks is preserved in output."""
         blocks = ["1", "2", "3"]
-        result = self.decider._enforce_context_budget(blocks, 10)
+        result = self.decider.chat_handler._enforce_context_budget(blocks, 10)
         self.assertEqual(result, "123")
 
 if __name__ == '__main__':
