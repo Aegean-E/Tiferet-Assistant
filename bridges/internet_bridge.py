@@ -8,7 +8,7 @@ import threading
 import xml.etree.ElementTree as ET
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import logging
 
 try:
@@ -442,7 +442,41 @@ class InternetBridge:
                         if not self._is_safe_url(url):
                             return "[Error: URL blocked by SSRF protection]"
 
-                    resp = self.session.get(url, headers=headers, timeout=10, allow_redirects=True)
+                    # Manual redirect handling to catch SSRF bypass via redirects
+                    current_url = url
+                    max_redirects = 5
+                    resp = None
+
+                    # Track headers to prevent cross-domain credential leakage
+                    current_headers = headers.copy()
+
+                    for hop in range(max_redirects + 1):
+                        resp = self.session.get(current_url, headers=current_headers, timeout=10, allow_redirects=False)
+
+                        if resp.is_redirect:
+                            next_url = resp.headers.get('Location')
+                            if not next_url:
+                                break
+
+                            # Resolve relative redirect URLs
+                            next_url = urljoin(current_url, next_url)
+
+                            # Validate the redirect target
+                            if not self._is_safe_url(next_url):
+                                self.log(f"🛡️ Blocked unsafe redirect: {current_url} -> {next_url}")
+                                return "[Error: URL blocked by SSRF protection during redirect]"
+
+                            # Cross-domain header protection: strip sensitive headers if host changes
+                            if urlparse(next_url).netloc != urlparse(current_url).netloc:
+                                for header in ['Authorization', 'Proxy-Authorization', 'Cookie']:
+                                    current_headers.pop(header, None)
+
+                            current_url = next_url
+                        else:
+                            break
+                    else:
+                        self.log(f"⚠️ Too many redirects for {url}")
+                        return "[Error: Too many redirects]"
                     
                     # Check content size (limit to 5MB)
                     if len(resp.content) > 5 * 1024 * 1024:
