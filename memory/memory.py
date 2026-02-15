@@ -88,6 +88,7 @@ class MemoryStore:
             con.execute("CREATE INDEX IF NOT EXISTS idx_identity ON memories(identity);")
             con.execute("CREATE INDEX IF NOT EXISTS idx_type ON memories(type);")
             con.execute("CREATE INDEX IF NOT EXISTS idx_subject ON memories(subject);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_parent_id ON memories(parent_id);")
 
             # Migration: Add embedding column if it doesn't exist (for existing DBs)
             try:
@@ -673,7 +674,12 @@ class MemoryStore:
                 AND m.deleted = 0
                 AND NOT EXISTS (
                     SELECT 1 FROM memories newer
-                    WHERE (newer.identity = m.identity OR newer.parent_id = m.id)
+                    WHERE newer.identity = m.identity
+                    AND newer.created_at > m.created_at
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM memories newer
+                    WHERE newer.parent_id = m.id
                     AND newer.created_at > m.created_at
                 )
                 ORDER BY m.created_at DESC
@@ -706,7 +712,12 @@ class MemoryStore:
             query += """
                 AND NOT EXISTS (
                     SELECT 1 FROM memories newer
-                    WHERE (newer.identity = m.identity OR newer.parent_id = m.id)
+                    WHERE newer.identity = m.identity
+                    AND newer.created_at > m.created_at
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM memories newer
+                    WHERE newer.parent_id = m.id
                     AND newer.created_at > m.created_at
                 )
                 ORDER BY m.created_at DESC
@@ -727,7 +738,12 @@ class MemoryStore:
                 AND m.deleted = 0
                 AND NOT EXISTS (
                     SELECT 1 FROM memories newer
-                    WHERE (newer.identity = m.identity OR newer.parent_id = m.id)
+                    WHERE newer.identity = m.identity
+                    AND newer.created_at > m.created_at
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM memories newer
+                    WHERE newer.parent_id = m.id
                     AND newer.created_at > m.created_at
                 )
             """, (mem_type.upper(),)).fetchall()
