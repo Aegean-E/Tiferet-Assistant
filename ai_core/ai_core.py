@@ -207,7 +207,7 @@ class AICore:
 
     def backup_databases(self):
         """Create a timestamped backup of all SQLite databases."""
-        backup_dir = "./data/backups"
+        backup_dir = self.get_settings().get("backup_dir", "./data/backups")
         os.makedirs(backup_dir, exist_ok=True)
         
         timestamp = time.strftime("%Y%m%d_%H%M%S")
