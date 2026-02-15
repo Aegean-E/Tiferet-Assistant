@@ -1116,47 +1116,72 @@ class MemoryStore:
         Used when a memory is refuted, weakening the credibility of its neighbors.
         Propagates recursively up to max_depth.
         """
-        # BFS for propagation
-        queue = [(seed_id, 0)] # (id, depth)
-        visited = set([seed_id])
+        # BFS for propagation (Optimized with Batched Level-by-Level)
         affected_count = 0
+        current_layer_ids = [seed_id]
+        visited = {seed_id}
 
         with self._connect() as con:
-            while queue:
-                curr_id, depth = queue.pop(0)
+            for depth in range(max_depth):
+                if not current_layer_ids:
+                    break
                 
-                if depth >= max_depth:
-                    continue
+                next_layer_candidates = {} # target_id -> strength
 
-                # Get neighbors
-                rows = con.execute("""
-                    SELECT m.id, l.strength
-                    FROM memory_links l
-                    JOIN memories m ON l.target_id = m.id
-                    WHERE l.source_id = ? AND l.strength >= 0.1
-                """, (curr_id,)).fetchall()
+                # 1. Fetch outgoing links for current layer (Chunked to avoid SQL limits)
+                chunk_size = 900
+                for i in range(0, len(current_layer_ids), chunk_size):
+                    chunk = current_layer_ids[i:i + chunk_size]
+                    placeholders = ','.join(['?'] * len(chunk))
 
-                for r in rows:
-                    neighbor_id = r[0]
-                    link_strength = r[1]
+                    rows = con.execute(f"""
+                        SELECT l.target_id, l.strength
+                        FROM memory_links l
+                        JOIN memories m ON l.target_id = m.id
+                        WHERE l.source_id IN ({placeholders}) AND l.strength >= 0.1
+                    """, chunk).fetchall()
+
+                    for target_id, strength in rows:
+                        if target_id not in visited:
+                            # Use max strength if multiple paths lead to same node in this layer
+                            if target_id not in next_layer_candidates:
+                                next_layer_candidates[target_id] = strength
+                            else:
+                                next_layer_candidates[target_id] = max(next_layer_candidates[target_id], strength)
+
+                if not next_layer_candidates:
+                    break
+
+                targets_to_update = list(next_layer_candidates.keys())
+                visited.update(targets_to_update)
+
+                # 2. Fetch current confidence and prepare updates
+                updates = []
+
+                for i in range(0, len(targets_to_update), chunk_size):
+                    chunk = targets_to_update[i:i + chunk_size]
+                    placeholders = ','.join(['?'] * len(chunk))
                     
-                    if neighbor_id not in visited:
-                        visited.add(neighbor_id)
-                        
-                        # Apply decay
-                        row = con.execute("SELECT confidence FROM memories WHERE id = ?", (neighbor_id,)).fetchone()
-                        if row:
-                            current_conf = row[0]
-                            # Decay proportional to link strength
-                            drop = (1.0 - decay_factor) * link_strength
-                            new_conf = max(0.1, current_conf * (1.0 - drop))
-                            
-                            con.execute("UPDATE memories SET confidence = ? WHERE id = ?", (new_conf, neighbor_id))
-                            affected_count += 1
-                        
-                        queue.append((neighbor_id, depth + 1))
+                    conf_rows = con.execute(
+                        f"SELECT id, confidence FROM memories WHERE id IN ({placeholders})",
+                        chunk
+                    ).fetchall()
+
+                    for mid, current_conf in conf_rows:
+                        strength = next_layer_candidates[mid]
+                        drop = (1.0 - decay_factor) * strength
+                        new_conf = max(0.1, current_conf * (1.0 - drop))
+                        updates.append((new_conf, mid))
+
+                # 3. Batch Update
+                if updates:
+                    con.executemany("UPDATE memories SET confidence = ? WHERE id = ?", updates)
+                    affected_count += len(updates)
+
+                current_layer_ids = targets_to_update
 
             con.commit()
+
             if affected_count > 0:
                 logging.info(f"📉 [Memory] Decayed confidence for {affected_count} nodes linked to ID {seed_id} (Depth {max_depth})")
 
