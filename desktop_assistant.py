@@ -897,13 +897,42 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
         self.status_var.set("Feedback recorded. Thank you!")
 
+    def _ingest_document(self, file_path: str, upload_source: str = "desktop_gui", original_filename: str = None) -> Dict:
+        """
+        Ingests a local document file into the system.
+        Returns dict with status ('success', 'duplicate') and details.
+        """
+        filename = original_filename if original_filename else os.path.basename(file_path)
+        file_hash = self.document_store.compute_file_hash(file_path)
+
+        if self.document_store.document_exists(file_hash):
+            return {'status': 'duplicate', 'filename': filename}
+
+        chunks, page_count, file_type = self.document_processor.process_document(file_path)
+
+        self.document_store.add_document(
+            file_hash=file_hash,
+            filename=filename,
+            file_type=file_type,
+            file_size=os.path.getsize(file_path),
+            page_count=page_count,
+            chunks=chunks,
+            upload_source=upload_source
+        )
+
+        return {
+            'status': 'success',
+            'filename': filename,
+            'chunks_count': len(chunks),
+            'page_count': page_count
+        }
+
     def handle_telegram_document(self, msg: Dict):
         """Handle document upload from Telegram"""
         try:
             file_info = msg["document"]
             file_id = file_info["file_id"]
             file_name = file_info.get("file_name", "unknown_file")
-            file_size = file_info.get("file_size", 0)
             chat_id = msg["chat_id"]
 
             # Check supported types
@@ -924,33 +953,14 @@ class DesktopAssistantApp(DesktopAssistantUI):
             
             self.telegram_bridge.download_file(telegram_file_path, local_file_path)
 
-            # Check duplicates
-            file_hash = self.document_store.compute_file_hash(local_file_path)
-            if self.document_store.document_exists(file_hash):
+            # Ingest using common logic
+            result = self._ingest_document(local_file_path, upload_source="telegram", original_filename=file_name)
+
+            if result['status'] == 'duplicate':
                 self.telegram_bridge.send_message(f"⚠️ Document '{file_name}' already exists in database. Skipping...")
-                os.remove(local_file_path)
-                return
-
-            # Process
-            chunks, page_count, file_type = self.document_processor.process_document(local_file_path)
-
-            # Add to store
-            self.document_store.add_document(
-                file_hash=file_hash,
-                filename=file_name,
-                file_type=file_type,
-                file_size=file_size,
-                page_count=page_count,
-                chunks=chunks,
-                upload_source="telegram"
-            )
-
-            self.telegram_bridge.send_message(f"✅ Successfully added '{file_name}' to database ({len(chunks)} chunks).")
-            
-            # Cleanup
-            
-            # Refresh GUI if needed
-            self.root.after(0, self.refresh_documents)
+            elif result['status'] == 'success':
+                self.telegram_bridge.send_message(f"✅ Successfully added '{file_name}' to database ({result['chunks_count']} chunks).")
+                self.root.after(0, self.refresh_documents)
 
         except Exception as e:
             logging.error(f"Error handling Telegram document: {e}")
@@ -1096,34 +1106,17 @@ class DesktopAssistantApp(DesktopAssistantUI):
                     filename = os.path.basename(file_path)
                     if hasattr(self, 'debug_log'):
                         self.log_debug_message(f"Processing ({i+1}/{total_files}): {filename}")
+                        self.log_debug_message(f"Extracting text from: {filename}")
 
-                    # Check for duplicates
-                    file_hash = self.document_store.compute_file_hash(file_path)
-                    if self.document_store.document_exists(file_hash):
+                    result = self._ingest_document(file_path, upload_source="desktop_gui", original_filename=filename)
+
+                    if result['status'] == 'duplicate':
                         if hasattr(self, 'debug_log'):
                             self.log_debug_message(f"Skipping duplicate: {filename}")
                         continue
 
-                    # Process document
                     if hasattr(self, 'debug_log'):
-                        self.log_debug_message(f"Extracting text from: {filename}")
-                    chunks, page_count, file_type = self.document_processor.process_document(file_path)
-                    if hasattr(self, 'debug_log'):
-                        self.log_debug_message(f"Successfully extracted {len(chunks)} chunks from {filename} ({page_count} pages)")
-
-                    # Add to store
-                    if hasattr(self, 'debug_log'):
-                        self.log_debug_message(f"Adding document to store: {filename}")
-                    self.document_store.add_document(
-                        file_hash=file_hash,
-                        filename=filename,
-                        file_type=file_type,
-                        file_size=os.path.getsize(file_path),
-                        page_count=page_count,
-                        chunks=chunks,
-                        upload_source="desktop_gui"
-                    )
-                    if hasattr(self, 'debug_log'):
+                        self.log_debug_message(f"Successfully extracted {result['chunks_count']} chunks from {filename} ({result['page_count']} pages)")
                         self.log_debug_message(f"Successfully added: {filename}")
 
                     success_count += 1
