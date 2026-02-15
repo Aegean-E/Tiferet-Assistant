@@ -1942,24 +1942,19 @@ class Decider:
         
         return "".join(final_blocks)
 
-    def perform_thinking_chain(self, topic: str, max_depth: int = 10, beam_width: int = 3):
-        """Execute a Tree of Thoughts (ToT) reasoning process."""
-        self.log(f"🌳 Decider starting Tree of Thoughts on: {topic}")
-        if self.chat_fn:
-            self.chat_fn("Decider", f"🌳 Starting Tree of Thoughts: {topic}")
-            
+    def _gather_thinking_context(self, topic: str) -> str:
+        """Helper to gather relevant memories, documents, and subjective context for ToT."""
         settings = self.get_settings()
-
-        # 0.5 Retrieve Subjective Memories (Recursive Subjectivity)
         subjective_context = ""
+
+        # 0.5 Retrieve Subjective Memories
         if hasattr(self.meta_memory_store, 'search'):
-            # Search for meta-memories related to the topic to find past feelings/states
             query_embedding = compute_embedding(topic, base_url=settings.get("base_url"), embedding_model=settings.get("embedding_model"))
             subj_results = self.meta_memory_store.search(query_embedding, limit=3)
             if subj_results:
                 subjective_context = "Relevant Subjective Experiences (How I felt before):\n" + "\n".join([f"- [{m['event_type']}] {m['text']}" for m in subj_results]) + "\n"
 
-        # 1. Gather Context (Memories & Docs) to ground the thinking
+        # 1. Gather Context (Memories & Docs)
         query_embedding = compute_embedding(
             topic, 
             base_url=settings.get("base_url"),
@@ -1980,12 +1975,144 @@ class Decider:
             static_context += f"\n{context_str}\n"
         if subjective_context:
             static_context += f"\n{subjective_context}\n"
-        
-        # Ask Daat for structure (Graph of Thoughts)
+
+        # Ask Daat for structure
         if self.daat:
             structure = self.daat.provide_reasoning_structure(topic)
             if structure and not structure.startswith("⚠️"):
                 static_context += f"\nReasoning Structure (Guide):\n{structure}\n"
+
+        return static_context
+
+    def _expand_thought_paths(self, active_paths: List[List[str]], static_context: str, beam_width: int, topic: str):
+        """Helper to expand current thought paths using LLM."""
+        candidates = []
+        final_conclusion = None
+        best_path = []
+        settings = self.get_settings()
+
+        for path in active_paths:
+            if self.stop_check(): break
+
+            # Generate N possible next steps for this path
+            path_str = "\n".join([f"Step {i+1}: {t}" for i, t in enumerate(path)])
+
+            prompt = (
+                f"You are an AGI reasoning engine using Tree of Thoughts.\n"
+                f"{static_context}\n"
+                f"Current Path:\n{path_str}\n\n"
+                f"Generate {beam_width} distinct, valid next steps to advance reasoning towards a solution.\n"
+                "If a solution is reached, start the step with '[CONCLUSION]'.\n"
+                "Output JSON list of strings: [\"Step A...\", \"Step B...\", \"Step C...\"]"
+            )
+
+            response = run_local_lm(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="You are a Generator.",
+                temperature=0.7,
+                max_tokens=400,
+                base_url=settings.get("base_url"),
+                chat_model=settings.get("chat_model"),
+                stop_check_fn=self.stop_check
+            )
+
+            next_steps = parse_json_array_loose(response)
+            if not next_steps:
+                next_steps = [response.strip()]
+
+            # Evaluation Phase (Scoring)
+            for step in next_steps:
+                if not isinstance(step, str): continue
+
+                # Check for conclusion
+                if "[CONCLUSION]" in step:
+                    final_conclusion = step.replace("[CONCLUSION]", "").strip()
+                    best_path = path + [step]
+                    break
+
+                # Score the step
+                eval_prompt = (
+                    f"Evaluate this reasoning step for the topic '{topic}':\n"
+                    f"Step: \"{step}\"\n"
+                    "Criteria: Logic, Relevance, Novelty.\n"
+                    "Output a score from 0.0 to 1.0."
+                )
+
+                score_str = run_local_lm(
+                    messages=[{"role": "user", "content": eval_prompt}],
+                    system_prompt="You are an Evaluator.",
+                    temperature=0.1,
+                    max_tokens=10,
+                    base_url=settings.get("base_url"),
+                    chat_model=settings.get("chat_model")
+                )
+
+                try:
+                    score = float(re.search(r"0\.\d+|1\.0|0|1", score_str).group())
+                except:
+                    score = 0.5
+
+                candidates.append((path + [step], score))
+
+            if final_conclusion:
+                break
+
+        return candidates, final_conclusion, best_path
+
+    def _select_best_paths(self, candidates: List[tuple], beam_width: int, depth: int, topic: str) -> List[List[str]]:
+        """Helper to select top K paths using Beam Search."""
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        active_paths = [c[0] for c in candidates[:beam_width]]
+
+        # Log best step of this depth
+        if active_paths:
+            best_step = active_paths[0][-1]
+            self.log(f"🌳 Best Step at Depth {depth}: {best_step[:100]}...")
+            if self.chat_fn:
+                self.chat_fn("Decider", f"🌳 Depth {depth}: {best_step}")
+
+            # Store in reasoning
+            self.reasoning_store.add(content=f"ToT Depth {depth} ({topic}): {best_step}", source="decider_tot", confidence=1.0)
+
+        return active_paths
+
+    def _summarize_thinking_chain(self, topic: str, best_path: List[str]) -> str:
+        """Helper to summarize the reasoning chain."""
+        self.log(f"🧠 Generating summary of Tree of Thoughts...")
+        settings = self.get_settings()
+        full_chain_text = "\n".join(best_path)
+        summary_prompt = (
+            f"Synthesize the following reasoning path regarding '{topic}' into a clear, comprehensive summary for the user.\n"
+            f"Include key insights and the final conclusion if reached.\n\n"
+            f"Reasoning Path:\n{full_chain_text}"
+        )
+
+        summary = run_local_lm(
+            messages=[{"role": "user", "content": summary_prompt}],
+            system_prompt="You are a helpful assistant summarizing your internal reasoning.",
+            temperature=0.5,
+            max_tokens=500,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model"),
+            stop_check_fn=self.stop_check
+        )
+
+        if self.chat_fn:
+            self.chat_fn("Decider", f"🌳 Tree of Thoughts Summary:\n{summary}")
+
+        # Metacognitive Reflection on the thinking process
+        self._reflect_on_decision(f"Tree of Thoughts on {topic}", summary)
+
+        return summary
+
+    def perform_thinking_chain(self, topic: str, max_depth: int = 10, beam_width: int = 3):
+        """Execute a Tree of Thoughts (ToT) reasoning process."""
+        self.log(f"🌳 Decider starting Tree of Thoughts on: {topic}")
+        if self.chat_fn:
+            self.chat_fn("Decider", f"🌳 Starting Tree of Thoughts: {topic}")
+
+        # 1. Gather Context
+        static_context = self._gather_thinking_context(topic)
 
         # Tree State: List of paths. A path is a list of thought strings.
         # Start with one empty path
@@ -2002,88 +2129,19 @@ class Decider:
 
             self.log(f"🌳 Depth {depth}: Expanding {len(active_paths)} paths...")
             
-            candidates = [] # List of (path, score)
-
-            # Expansion Phase (Branching)
-            for path in active_paths:
-                # Generate N possible next steps for this path
-                path_str = "\n".join([f"Step {i+1}: {t}" for i, t in enumerate(path)])
-                
-                prompt = (
-                    f"You are an AGI reasoning engine using Tree of Thoughts.\n"
-                    f"{static_context}\n"
-                    f"Current Path:\n{path_str}\n\n"
-                    f"Generate {beam_width} distinct, valid next steps to advance reasoning towards a solution.\n"
-                    "If a solution is reached, start the step with '[CONCLUSION]'.\n"
-                    "Output JSON list of strings: [\"Step A...\", \"Step B...\", \"Step C...\"]"
-                )
-                
-                response = run_local_lm(
-                    messages=[{"role": "user", "content": prompt}],
-                    system_prompt="You are a Generator.",
-                    temperature=0.7,
-                    max_tokens=400,
-                    base_url=settings.get("base_url"),
-                    chat_model=settings.get("chat_model"),
-                    stop_check_fn=self.stop_check
-                )
-                
-                next_steps = parse_json_array_loose(response)
-                if not next_steps:
-                    # Fallback if JSON fails
-                    next_steps = [response.strip()]
-                
-                # Evaluation Phase (Scoring)
-                for step in next_steps:
-                    if not isinstance(step, str): continue
-                    
-                    # Check for conclusion
-                    if "[CONCLUSION]" in step:
-                        final_conclusion = step.replace("[CONCLUSION]", "").strip()
-                        best_path = path + [step]
-                        break
-                    
-                    # Score the step
-                    eval_prompt = (
-                        f"Evaluate this reasoning step for the topic '{topic}':\n"
-                        f"Step: \"{step}\"\n"
-                        "Criteria: Logic, Relevance, Novelty.\n"
-                        "Output a score from 0.0 to 1.0."
-                    )
-                    
-                    score_str = run_local_lm(
-                        messages=[{"role": "user", "content": eval_prompt}],
-                        system_prompt="You are an Evaluator.",
-                        temperature=0.1,
-                        max_tokens=10,
-                        base_url=settings.get("base_url"),
-                        chat_model=settings.get("chat_model")
-                    )
-                    
-                    try:
-                        score = float(re.search(r"0\.\d+|1\.0|0|1", score_str).group())
-                    except:
-                        score = 0.5
-                    
-                    candidates.append((path + [step], score))
-                
-                if final_conclusion:
-                    break
+            # Expansion Phase (Branching & Evaluation)
+            candidates, found_conclusion, found_path = self._expand_thought_paths(active_paths, static_context, beam_width, topic)
+            
+            if found_conclusion:
+                final_conclusion = found_conclusion
+                best_path = found_path
+                break
             
             # Selection Phase (Beam Search)
-            # Sort by score descending and keep top K
-            candidates.sort(key=lambda x: x[1], reverse=True)
-            active_paths = [c[0] for c in candidates[:beam_width]]
-            
-            # Log best step of this depth
+            active_paths = self._select_best_paths(candidates, beam_width, depth, topic)
             if active_paths:
-                best_step = active_paths[0][-1]
-                self.log(f"🌳 Best Step at Depth {depth}: {best_step[:100]}...")
-                if self.chat_fn:
-                    self.chat_fn("Decider", f"🌳 Depth {depth}: {best_step}")
-                
-                # Store in reasoning
-                self.reasoning_store.add(content=f"ToT Depth {depth} ({topic}): {best_step}", source="decider_tot", confidence=1.0)
+                # Update best path to the current best just in case we stop prematurely
+                best_path = active_paths[0]
             
         if not final_conclusion and active_paths:
             # If max depth reached without conclusion, take the best path
@@ -2094,29 +2152,7 @@ class Decider:
         
         # Post-chain Summarization
         if best_path:
-            self.log(f"🧠 Generating summary of Tree of Thoughts...")
-            full_chain_text = "\n".join(best_path)
-            summary_prompt = (
-                f"Synthesize the following reasoning path regarding '{topic}' into a clear, comprehensive summary for the user.\n"
-                f"Include key insights and the final conclusion if reached.\n\n"
-                f"Reasoning Path:\n{full_chain_text}"
-            )
-            
-            summary = run_local_lm(
-                messages=[{"role": "user", "content": summary_prompt}],
-                system_prompt="You are a helpful assistant summarizing your internal reasoning.",
-                temperature=0.5,
-                max_tokens=500,
-                base_url=settings.get("base_url"),
-                chat_model=settings.get("chat_model"),
-                stop_check_fn=self.stop_check
-            )
-            
-            if self.chat_fn:
-                self.chat_fn("Decider", f"🌳 Tree of Thoughts Summary:\n{summary}")
-
-            # Metacognitive Reflection on the thinking process
-            self._reflect_on_decision(f"Tree of Thoughts on {topic}", summary)
+            summary = self._summarize_thinking_chain(topic, best_path)
 
             # Save summary as note if no formal conclusion was reached (e.g. interrupted by loop)
             # This ensures partial progress is preserved in memory
