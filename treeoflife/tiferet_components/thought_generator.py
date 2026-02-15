@@ -121,6 +121,15 @@ class ThoughtGenerator:
         if self.decider.chat_fn:
             self.decider.chat_fn("Decider", f"🧠 {strategy_name} Conclusion:\n{summary}")
 
+        # NEW: Publish Thought Event
+        if self.decider.event_bus:
+            self.decider.event_bus.publish("THOUGHT_GENERATED", {
+                "topic": topic,
+                "strategy": strategy_name,
+                "summary": summary,
+                "full_record": full_record
+            }, source="ThoughtGenerator", priority=8)
+
     def _gather_thinking_context(self, topic: str) -> str:
         """Helper to gather relevant memories, documents, and subjective context."""
         settings = self.decider.get_settings()

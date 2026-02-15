@@ -26,6 +26,46 @@ class GlobalWorkspace:
         except Exception as e:
             print(f"Warning: Could not initialize stream file: {e}")
 
+        # Subscribe to events if EventBus is available
+        self.subscribe_to_events()
+
+    def subscribe_to_events(self):
+        """Subscribe to system events for consciousness integration."""
+        if hasattr(self.core, "event_bus") and self.core.event_bus:
+            self.core.event_bus.subscribe("TOOL_EXECUTION", self._handle_tool_execution, priority=5)
+            self.core.event_bus.subscribe("THOUGHT_GENERATED", self._handle_thought_generated, priority=6)
+            self.core.event_bus.subscribe("GOAL_CREATED", self._handle_goal_created, priority=7)
+            self.core.event_bus.subscribe("GOAL_UPDATED", self._handle_goal_updated, priority=7)
+            self.core.event_bus.subscribe("GOAL_COMPLETED", self._handle_goal_completed, priority=8)
+
+    def _handle_tool_execution(self, event):
+        data = event.data or {}
+        tool = data.get("tool", "Unknown Tool")
+        args = data.get("args", "")
+        self.integrate(f"Executed {tool}: {args}", "ActionManager", 0.8)
+
+    def _handle_thought_generated(self, event):
+        data = event.data or {}
+        topic = data.get("topic", "Unknown Topic")
+        summary = data.get("summary", "")
+        self.integrate(f"Thought on '{topic}': {summary[:100]}...", "ThoughtGenerator", 0.7)
+
+    def _handle_goal_created(self, event):
+        data = event.data or {}
+        content = data.get("content", "Unknown Goal")
+        self.integrate(f"New Goal: {content}", "GoalManager", 0.9)
+
+    def _handle_goal_updated(self, event):
+        data = event.data or {}
+        status = data.get("status", "UPDATED")
+        content = data.get("content", "Goal")
+        self.integrate(f"Goal {status}: {content}", "GoalManager", 0.8)
+
+    def _handle_goal_completed(self, event):
+        data = event.data or {}
+        content = data.get("content", "Goal")
+        self.integrate(f"Goal Completed: {content}", "GoalManager", 0.9)
+
     def integrate(self, content: str, source: str, salience: float, metadata: Dict = None):
         """
         Add a new item to working memory.
