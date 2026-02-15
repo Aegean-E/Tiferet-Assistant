@@ -244,7 +244,7 @@ _LM_CACHE_SIZE = 100
 _LM_CACHE_LOCK = threading.Lock()
 
 # Global semaphore to limit concurrent GPU calls
-GPU_SEMAPHORE = threading.Semaphore(1)  # Default to 1 for safety
+GPU_SEMAPHORE = threading.Semaphore(4)  # Default to 1 for safety
 
 
 class LLMRequest:

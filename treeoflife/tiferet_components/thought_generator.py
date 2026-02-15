@@ -2,6 +2,7 @@ import re
 import json
 from enum import Enum
 from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ai_core.lm import compute_embedding, run_local_lm
 from ai_core.utils import parse_json_array_loose
 
@@ -166,6 +167,15 @@ class ThoughtGenerator:
 
         # Ask Daat for structure
         if self.decider.daat:
+            # INTEGRATION: Spreading Activation
+            self.decider.log(f"🧠 [ThoughtGenerator] Enhancing context with Da'at Spreading Activation...")
+            try:
+                deep_context = self.decider.daat.spreading_activation_search(topic, max_results=5)
+                if deep_context:
+                    static_context += "\nDeep Semantic Associations (Da'at):\n" + "\n".join([f"- {m['text']}" for m in deep_context]) + "\n"
+            except Exception as e:
+                self.decider.log(f"⚠️ Da'at integration failed: {e}")
+
             structure = self.decider.daat.provide_reasoning_structure(topic)
             if structure and not structure.startswith("⚠️"):
                 static_context += f"\nReasoning Structure (Guide):\n{structure}\n"
@@ -310,96 +320,125 @@ class ThoughtGenerator:
         return trace
 
     def _expand_thought_paths(self, active_paths: List[List[str]], static_context: str, beam_width: int, topic: str):
-        """Helper to expand current thought paths using LLM."""
+        """Helper to expand current thought paths using LLM - PARALLELIZED."""
         candidates = []
         final_conclusion = None
         best_path = []
         settings = self.decider.get_settings()
 
-        for path in active_paths:
-            if self.decider.stop_check(): break
+        # Using a larger max_workers since evaluations can also run in parallel
+        # We need roughly (beam_width) generation threads, then (beam_width * beam_width) eval threads
+        max_threads = max(4, beam_width * 3)
 
-            # Generate N possible next steps for this path
-            path_str = "\n".join([f"Step {i+1}: {t}" for i, t in enumerate(path)])
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            # 1. Parallel Generation of Next Steps
+            future_to_path = {
+                executor.submit(self._generate_next_steps, path, static_context, beam_width, settings): path
+                for path in active_paths
+            }
 
-            prompt = (
-                f"You are an AGI reasoning engine using Tree of Thoughts.\n"
-                f"{static_context}\n"
-                f"Current Path:\n{path_str}\n\n"
-                f"Generate {beam_width} distinct, valid next steps to advance reasoning towards a solution.\n"
-                "If a solution is reached, start the step with '[CONCLUSION]'.\n"
-                "Output JSON list of strings: [\"Step A...\", \"Step B...\", \"Step C...\"]"
-            )
+            all_potential_steps = []
 
-            response = run_local_lm(
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt="You are a Generator. You explore possibilities.",
-                temperature=0.7,
-                max_tokens=400,
-                base_url=settings.get("base_url"),
-                chat_model=settings.get("chat_model"),
-                stop_check_fn=self.decider.stop_check
-            )
-
-            next_steps = parse_json_array_loose(response)
-            if not next_steps:
-                next_steps = [response.strip()]
-
-            # Evaluation Phase (Scoring)
-            for step in next_steps:
-                if not isinstance(step, str): continue
-
-                # Check for conclusion
-                if "[CONCLUSION]" in step:
-                    final_conclusion = step.replace("[CONCLUSION]", "").strip()
-                    best_path = path + [step]
-                    break
-
-                # Score the step
-                # Improved Scoring Prompt
-                eval_prompt = (
-                    f"Evaluate this reasoning step for the topic '{topic}':\n"
-                    f"Step: \"{step}\"\n"
-                    "Criteria: Logic, Relevance, Novelty.\n"
-                    "Output valid JSON: {\"score\": 0.0 to 1.0, \"reason\": \"short reason\"}"
-                )
-
-                score_str = run_local_lm(
-                    messages=[{"role": "user", "content": eval_prompt}],
-                    system_prompt="You are an Evaluator. You judge the quality of thoughts.",
-                    temperature=0.1,
-                    max_tokens=100,
-                    base_url=settings.get("base_url"),
-                    chat_model=settings.get("chat_model")
-                )
-
+            for future in as_completed(future_to_path):
+                if self.decider.stop_check(): break
+                path = future_to_path[future]
                 try:
-                    # Attempt to parse JSON
-                    # Use utility or simple json load
-                    # First try strict JSON
-                    data = {}
-                    try:
-                        data = json.loads(score_str)
-                    except:
-                        # Try to extract JSON from markdown
-                        match = re.search(r"\{.*\}", score_str, re.DOTALL)
-                        if match:
-                            data = json.loads(match.group(0))
+                    steps = future.result()
+                    for step in steps:
+                         all_potential_steps.append((path, step))
+                except Exception as e:
+                    self.decider.log(f"⚠️ Error generating steps: {e}")
 
-                    score = float(data.get("score", 0.5))
-                except:
-                    # Fallback to regex if JSON fails
-                    try:
-                        score = float(re.search(r"0\.\d+|1\.0|0|1", score_str).group())
-                    except:
-                        score = 0.5
+            # 2. Parallel Evaluation of Steps
+            future_to_candidate = {}
+            for path, step in all_potential_steps:
+                if self.decider.stop_check(): break
 
-                candidates.append((path + [step], score))
+                # Check for conclusion immediately
+                if "[CONCLUSION]" in step:
+                     final_conclusion = step.replace("[CONCLUSION]", "").strip()
+                     best_path = path + [step]
+                     # Cancel pending if possible, but we must break outer
+                     break
+
+                future = executor.submit(self._evaluate_step, step, topic, settings)
+                future_to_candidate[future] = (path, step)
 
             if final_conclusion:
-                break
+                return [], final_conclusion, best_path
+
+            for future in as_completed(future_to_candidate):
+                if self.decider.stop_check(): break
+                path, step = future_to_candidate[future]
+                try:
+                    score = future.result()
+                    candidates.append((path + [step], score))
+                except Exception as e:
+                    self.decider.log(f"⚠️ Error evaluating step: {e}")
 
         return candidates, final_conclusion, best_path
+
+    def _generate_next_steps(self, path: List[str], static_context: str, beam_width: int, settings: Dict) -> List[str]:
+        """Worker method for generating next steps."""
+        path_str = "\n".join([f"Step {i+1}: {t}" for i, t in enumerate(path)])
+
+        prompt = (
+            f"You are an AGI reasoning engine using Tree of Thoughts.\n"
+            f"{static_context}\n"
+            f"Current Path:\n{path_str}\n\n"
+            f"Generate {beam_width} distinct, valid next steps to advance reasoning towards a solution.\n"
+            "If a solution is reached, start the step with '[CONCLUSION]'.\n"
+            "Output JSON list of strings: [\"Step A...\", \"Step B...\", \"Step C...\"]"
+        )
+
+        response = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Generator. You explore possibilities.",
+            temperature=0.7,
+            max_tokens=400,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model"),
+            stop_check_fn=self.decider.stop_check
+        )
+
+        next_steps = parse_json_array_loose(response)
+        if not next_steps:
+            next_steps = [response.strip()]
+
+        return [s for s in next_steps if isinstance(s, str)]
+
+    def _evaluate_step(self, step: str, topic: str, settings: Dict) -> float:
+        """Worker method for evaluating a step."""
+        eval_prompt = (
+            f"Evaluate this reasoning step for the topic '{topic}':\n"
+            f"Step: \"{step}\"\n"
+            "Criteria: Logic, Relevance, Novelty.\n"
+            "Output valid JSON: {\"score\": 0.0 to 1.0, \"reason\": \"short reason\"}"
+        )
+
+        score_str = run_local_lm(
+            messages=[{"role": "user", "content": eval_prompt}],
+            system_prompt="You are an Evaluator. You judge the quality of thoughts.",
+            temperature=0.1,
+            max_tokens=100,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+
+        try:
+            data = {}
+            try:
+                data = json.loads(score_str)
+            except:
+                match = re.search(r"\{.*\}", score_str, re.DOTALL)
+                if match:
+                    data = json.loads(match.group(0))
+            return float(data.get("score", 0.5))
+        except:
+            try:
+                return float(re.search(r"0\.\d+|1\.0|0|1", score_str).group())
+            except:
+                return 0.5
 
     def _select_best_paths(self, candidates: List[tuple], beam_width: int, depth: int, topic: str) -> List[List[str]]:
         """Helper to select top K paths using Beam Search."""
@@ -454,3 +493,30 @@ class ThoughtGenerator:
 
         # Metacognitive Reflection on the reflection
         self.decider.decision_maker._reflect_on_decision("Deep Self-Reflection", reflection)
+
+    def evolve_stream_of_consciousness(self, current_thought: str, context: str) -> str:
+        """
+        Single-step thought evolution (Lightweight).
+        Merges GlobalWorkspace.evolve_thought logic into the generator.
+        """
+        settings = self.decider.get_settings()
+
+        prompt = (
+            f"CONTEXT:\n{context}\n\n"
+            f"CURRENT THOUGHT: {current_thought}\n\n"
+            "You are the Inner Voice of the AI (Stream of Consciousness).\n"
+            "Expand on this thought. Connect it to broader implications, recent memories, or refine it into a specific question.\n"
+            "Do not repeat the thought. Move it forward.\n"
+            "Output ONLY the new thought (1-2 sentences)."
+        )
+
+        response = run_local_lm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a Stream of Consciousness.",
+            temperature=0.7,
+            max_tokens=100,
+            base_url=settings.get("base_url"),
+            chat_model=settings.get("chat_model")
+        )
+
+        return response.strip()

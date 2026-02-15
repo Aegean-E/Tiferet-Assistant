@@ -118,5 +118,27 @@ class TestThoughtGenerator(unittest.TestCase):
         strategy = self.tg._choose_strategy("Complex Topic")
         self.assertEqual(strategy, ThinkingStrategy.FIRST_PRINCIPLES)
 
+    @patch('treeoflife.tiferet_components.thought_generator.run_local_lm')
+    def test_evolve_stream_of_consciousness(self, mock_lm):
+        mock_lm.return_value = "This is the next thought."
+
+        result = self.tg.evolve_stream_of_consciousness(
+            current_thought="I am thinking.",
+            context="Context: None"
+        )
+
+        self.assertEqual(result, "This is the next thought.")
+
+        # Verify prompt structure
+        args, kwargs = mock_lm.call_args
+        if 'messages' in kwargs:
+            messages = kwargs['messages']
+        else:
+            messages = args[0]
+
+        prompt_content = messages[0]['content']
+        self.assertIn("You are the Inner Voice", prompt_content)
+        self.assertIn("CURRENT THOUGHT: I am thinking.", prompt_content)
+
 if __name__ == '__main__':
     unittest.main()

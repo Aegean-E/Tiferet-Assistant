@@ -257,37 +257,3 @@ class GlobalWorkspace:
         # Sort by salience desc
         sorted_mem = sorted(self.working_memory, key=lambda x: x["salience"], reverse=True)
         return sorted_mem[0]
-
-    def evolve_thought(self, chat_model: str = None, base_url: str = None) -> str:
-        """
-        Evolve the dominant thought using LLM (Chain of Thought).
-        """
-        dominant = self.get_dominant_thought()
-        if not dominant:
-            return "Mind is empty."
-
-        content = dominant["content"]
-
-        prompt = (
-            f"CURRENT THOUGHT: {content}\n\n"
-            "You are the Inner Voice of the AI.\n"
-            "Expand on this thought. Connect it to broader implications, or refine it into a specific question.\n"
-            "Do not repeat the thought. Move it forward.\n"
-            "Output ONLY the new thought (1-2 sentences)."
-        )
-
-        response = run_local_lm(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are a Stream of Consciousness.",
-            temperature=0.7,
-            max_tokens=100,
-            chat_model=chat_model,
-            base_url=base_url
-        )
-
-        if response and not response.startswith("⚠️"):
-            # Integrate back with high salience to maintain focus
-            self.integrate(response, "GlobalWorkspace", 1.0)
-            return response
-
-        return content
