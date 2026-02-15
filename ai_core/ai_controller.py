@@ -565,12 +565,18 @@ class AIController:
             self.is_thinking = True
             def run_thought_gw():
                 try:
-                    # Evolve the dominant thought using the Global Workspace
-                    settings = self.app.settings if hasattr(self.app, 'settings') else {}
-                    thought = self.ai_core.global_workspace.evolve_thought(
-                        chat_model=settings.get("chat_model"),
-                        base_url=settings.get("base_url")
-                    )
+                    # Evolve the dominant thought using the ThoughtGenerator
+                    current_thought_item = self.ai_core.global_workspace.get_dominant_thought()
+                    current_thought = current_thought_item['content'] if current_thought_item else "I am awake."
+                    context = self.ai_core.global_workspace.get_context()
+
+                    if self.ai_core.decider:
+                        thought = self.ai_core.decider.thought_generator.evolve_stream_of_consciousness(
+                            current_thought=current_thought,
+                            context=context
+                        )
+                    else:
+                        thought = "Thinking..."
 
                     if thought and not thought.startswith("⚠️"):
                         # Store in Reasoning Store (Long-term stream)
