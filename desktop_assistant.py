@@ -18,6 +18,7 @@ from collections import deque
 import subprocess
 import shutil
 from typing import Dict, List, Optional
+import config
 
 # Audio recording
 try:
@@ -54,12 +55,13 @@ class DesktopAssistantApp(DesktopAssistantUI):
 
     def __init__(self, root):
         self.root = root
+        config.ensure_data_directories()
         self.root.title("AI Desktop Assistant")
         self.root.geometry("1200x800")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Track the settings file path first
-        self.settings_file_path = "./settings.json"
+        self.settings_file_path = config.SETTINGS_FILE_PATH
         self.settings_lock = threading.RLock()
 
         # Initialize logging buffers early (migration might log)
@@ -791,7 +793,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
         self.message_entry.delete(0, tk.END)
 
         # Create a temp copy to avoid deleting the user's original file
-        temp_dir = "./data/temp_uploads"
+        temp_dir = config.TEMP_UPLOADS_DIR
         os.makedirs(temp_dir, exist_ok=True)
         filename = os.path.basename(file_path)
         temp_path = os.path.join(temp_dir, f"temp_{int(time.time())}_{filename}")
@@ -845,7 +847,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                 p.terminate()
                 
                 # Save to file
-                temp_wav = "./data/temp_voice_input.wav"
+                temp_wav = config.TEMP_VOICE_INPUT_FILE
                 wf = wave.open(temp_wav, 'wb')
                 wf.setnchannels(channels)
                 wf.setsampwidth(p.get_sample_size(format))
@@ -954,7 +956,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             telegram_file_path = file_data["file_path"]
 
             # Download
-            local_dir = "./data/uploaded_docs"
+            local_dir = config.UPLOADED_DOCS_DIR
             os.makedirs(local_dir, exist_ok=True)
             local_file_path = os.path.join(local_dir, file_name)
             
@@ -1028,7 +1030,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             caption = msg.get("caption", "") or "Analyze this image."
             
             # Download to temp
-            temp_path = f"./data/temp_img_{file_id}.jpg"
+            temp_path = os.path.join(config.DATA_DIR, f"temp_img_{file_id}.jpg")
             file_data = self.telegram_bridge.get_file_info(file_id)
             self.telegram_bridge.download_file(file_data["file_path"], temp_path)
             
@@ -1053,7 +1055,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
             file_data = self.telegram_bridge.get_file_info(file_id)
             telegram_file_path = file_data["file_path"]
             
-            temp_dir = "./data/temp_uploads"
+            temp_dir = config.TEMP_UPLOADS_DIR
             os.makedirs(temp_dir, exist_ok=True)
             local_file_path = os.path.join(temp_dir, f"voice_{file_id}.ogg")
             
@@ -1195,7 +1197,7 @@ class DesktopAssistantApp(DesktopAssistantUI):
                     content += f"- {sk[3]}\n"
 
             # 3. Write to Docs Folder
-            docs_dir = "./data/uploaded_docs"
+            docs_dir = config.UPLOADED_DOCS_DIR
             os.makedirs(docs_dir, exist_ok=True)
             filename = "assistant_journal.txt"
             file_path = os.path.join(docs_dir, filename)
