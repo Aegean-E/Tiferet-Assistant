@@ -373,7 +373,7 @@ class DecisionMaker:
                     options_text += "2. [DAYDREAM: N, MODE, TOPIC]: Run N cycles (1-5). MODE: 'READ', 'AUTO'. TOPIC: Optional subject. E.g., [DAYDREAM: 3, READ, Neurology]\n"
                     if active_goals:
                         options_text += "   (TIP: Use the TOPIC argument to focus on an active goal!)\n"
-                if is_allowed("think"): options_text += "3. [THINK: <TOPIC>]: Start a Tree of Thoughts (ToT) to analyze a specific topic deeply. Use for complex reasoning.\n"
+                if is_allowed("think"): options_text += "3. [THINK: <TOPIC>, <STRATEGY>]: Start a reasoning chain. STRATEGY can be AUTO, LINEAR, TREE_OF_THOUGHTS, DIALECTIC, or FIRST_PRINCIPLES. E.g., [THINK: Consciousness, DIALECTIC].\n"
                 if is_allowed("reflect"): options_text += "4. [REFLECT]: Pause to reflect on your own Identity, Goals, and recent performance. Use this to align actions with purpose.\n"
                 if is_allowed("philosophize"): options_text += "5. [PHILOSOPHIZE]: Generate a novel philosophical insight or hypothesis ex nihilo (using Chokmah).\n"
                 if is_allowed("debate"): options_text += "6. [DEBATE: <TOPIC>]: Convene 'The Council' (Hesed/Gevurah) to debate a complex topic.\n"
@@ -663,7 +663,15 @@ class DecisionMaker:
             elif "[THINK:" in response_upper:
                 try:
                     match = re.search(r"\[THINK:(.*?)\]?$", response, re.IGNORECASE | re.DOTALL)
-                    topic = match.group(1).strip() if match else "General"
+                    content = match.group(1).strip() if match else "General"
+
+                    topic = content
+                    strategy = "auto"
+
+                    if "," in content:
+                        parts = content.split(",", 1)
+                        topic = parts[0].strip()
+                        strategy = parts[1].strip()
 
                     # Clean up common hallucinated brackets
                     topic = topic.replace("<", "").replace(">", "").replace("[", "").replace("]", "")
@@ -679,7 +687,7 @@ class DecisionMaker:
                         else:
                             topic = "The Nature of Artificial Consciousness"
 
-                    self.decider.thought_generator.perform_thinking_chain(topic)
+                    self.decider.thought_generator.perform_thinking_chain(topic, strategy=strategy)
                     self.decider.consecutive_daydream_batches = 0
                 except Exception as e:
                     self.decider.log(f"⚠️ Decider failed to start thinking chain: {e}")
