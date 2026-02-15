@@ -1255,6 +1255,7 @@ class MemoryStore:
         """
         import re
         count = 0
+        updates = []
         try:
             with self._connect() as con:
                 # Find candidates
@@ -1267,10 +1268,12 @@ class MemoryStore:
                     new_text = re.sub(r"\[Source: '(.*?)'\]", r'[Source: \1]', new_text)
 
                     if new_text != text:
-                        con.execute("UPDATE memories SET text = ? WHERE id = ?", (new_text, mid))
-                        count += 1
-                con.commit()
-                if count > 0:
+                        updates.append((new_text, mid))
+
+                if updates:
+                    con.executemany("UPDATE memories SET text = ? WHERE id = ?", updates)
+                    con.commit()
+                    count = len(updates)
                     logging.info(f"🧹 [MemoryStore] Auto-sanitized {count} source tags.")
         except Exception as e:
             logging.error(f"❌ Error in sanitize_sources: {e}")
