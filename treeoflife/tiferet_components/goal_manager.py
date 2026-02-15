@@ -85,7 +85,7 @@ class GoalManager:
 
         # 3. SELF-PROMPT: "We have an active goal..."
         # We simulate a 'System' message to trigger the LLM to use a tool
-        system_injection = f"[SYSTEM_TRIGGER]: You are idle. Active Goal: '{goal_text}'. Execute a tool (SEARCH/WIKI) to advance this."
+        system_injection = f"[SYSTEM_TRIGGER]: You are idle. Active Goal: '{goal_text}'. Advance this goal. You can use [THINK], [SEARCH_INTERNET], [READ_DOC], [EXECUTE], or [GOAL_CREATE] (for sub-goals)."
 
         self.decider.log(f"🤖 Decider: Autonomously pursuing goal: {goal_text}")
 
